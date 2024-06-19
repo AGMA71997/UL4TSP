@@ -11,10 +11,7 @@ from random import shuffle
 import numpy as np
 import argparse
 from ESPRCTWProblemDef import get_random_problems
-import sys
 
-sys.path.insert(0, r'C:/Users/abdug/Python/POMO-implementation/ESPRCTW/POMO')
-sys.path.insert(0, r'C:/Users/abdug/Python/POMO-implementation/ESPRCTW')
 from ESPRCTWEnv import ESPRCTWEnv as Env
 from ESPRCTWModel import ESPRCTWModel as Model
 
@@ -199,7 +196,6 @@ def train(epoch):
         promising_columns, best_columns, best_rewards = pp_rl_solver.generate_columns()
 
         batchloss = torch.sum(best_rewards) / len(batch[0])
-        print(best_rewards)
 
         print('Loss: %.5f' % batchloss.item())
         optimizer.zero_grad()

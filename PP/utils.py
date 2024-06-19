@@ -3,47 +3,168 @@ adapted from Scattering GCN: Overcoming Oversmoothness in Graph Convolutional Ne
 '''
 import numpy as np
 import torch
-
-def PP_Loss(SctOutput,distance_matrix,num_of_nodes,device = 'cuda'):
-    '''
-    input:
-    SctOutput: batchsize * num_of_nodes * num_of_nodes tensor
-    distance_matrix: batchsize * num_of_nodes * num_of_nodes tensor
-    '''
-    Tsp_point_wise_distance = torch.matmul(SctOutput, torch.roll(torch.transpose(SctOutput, 1, 2),-1, 1))
-    weighted_path = torch.mul(Tsp_point_wise_distance, distance_matrix)
-    weighted_path = weighted_path.sum(dim=(1,2))
-    return weighted_path, Tsp_point_wise_distance
-
-def get_heat_map(SctOutput,num_of_nodes,device = 'cuda'):
-    '''
-    input:
-    SctOutput: batchsize * num_of_nodes * num_of_nodes tensor
-    '''
-    Tsp_point_wise_distance = torch.matmul(SctOutput, torch.roll(torch.transpose(SctOutput, 1, 2),-1, 1))
-    return Tsp_point_wise_distance
+from scipy.spatial import distance_matrix
+import math
 
 
-def edge_overlap(pred,gt_sol):
-    '''
-    gt_sol: the ground truth solution: a list with num_of_nodes nodes
-    pred: pred, an array with (num_of_nodes,top_k)
-    '''
-    gt_edge_set = set()
-    for i in range(pred.shape[0]):
-        gt_edge_set.add((int(gt_sol[i]),int(gt_sol[i+1])))
-        gt_edge_set.add((int(gt_sol[i+1]),int(gt_sol[i])))
-    pred_edge_set = set()
-    for i in range(pred.shape[0]):
-        for j in range(pred.shape[1]):
-            pred_node = pred[i][j]
-            pred_node = int(pred_node)
-            if not i==pred_node:
-                pred_edge_set.add((i,pred_node))
-                pred_edge_set.add((pred_node,i))
-    pred_gt_intsect = pred_edge_set.intersection(gt_edge_set)
-    len_of_pred_gt = len(pred_edge_set)
-    overlap_edge = len(pred_gt_intsect)/2 #here we consider bi-directional, so div 2
-    return overlap_edge,len_of_pred_gt/2
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
+def coord_to_adj(coord_arr, duals):
+    time_matrix = distance_matrix(coord_arr, coord_arr)
+    prices = create_prices(time_matrix, duals)
+    return time_matrix, prices
+
+
+def create_prices(time_matrix, duals):
+    if len(duals) < len(time_matrix):
+        duals.insert(0, 0)
+    assert duals[0] == 0 and len(duals) == len(time_matrix)
+    duals = np.array(duals)
+    prices = (time_matrix - duals) * -1
+    np.fill_diagonal(prices, 0)
+    return prices
+
+
+def merge_with_depot(depot_xy, coords, node_demand, time_windows, depot_time_window,
+                     duals, service_times):
+    batch_size = len(coords)
+    coords = torch.cat((depot_xy, coords), dim=1)
+    time_windows = torch.cat((depot_time_window, time_windows), dim=1)
+    depot_demand = torch.zeros(size=(batch_size, 1))
+    demands = torch.cat((depot_demand, node_demand), dim=1)
+    depot_st = torch.zeros(size=(batch_size, 1))
+    service_times = torch.cat((depot_st, service_times), dim=1)
+    depot_dual = torch.zeros(size=(batch_size, 1))
+    duals = torch.cat((depot_dual, duals), dim=1)
+    return coords, time_windows, demands, service_times, duals
+
+
+def reshape_problem(coords, demands, time_windows, duals, service_times, time_matrix, prices, red_dim):
+    coords = np.copy(coords)
+    demands = np.copy(demands)
+    time_windows = np.copy(time_windows)
+    duals = np.copy(duals)
+    service_times = np.copy(service_times)
+    time_matrix = np.copy(time_matrix)
+    prices = np.copy(prices)
+
+    batch_size = len(coords)
+    red_cor, red_tw = np.zeros((batch_size, red_dim, 2)), np.zeros((batch_size, red_dim, 2))
+    red_dems, red_duls, red_sts = np.zeros((batch_size, red_dim)), np.zeros((batch_size, red_dim)), np.zeros(
+        (batch_size, red_dim))
+    red_tts, red_prices = np.zeros((batch_size, red_dim, red_dim)), np.zeros((batch_size, red_dim, red_dim))
+    cus_mappings = []
+    for x in range(len(coords)):
+        remaining_customers = []
+        cus_map = {}
+        for y in range(1, len(coords[0])):
+            if coords[x, y, 0] == math.inf:
+                demands[x, y] = math.inf
+                time_windows[x, y, :] = math.inf
+                duals[x, y] = math.inf
+                service_times[x, y] = math.inf
+                time_matrix[x, y, :] = math.inf
+                time_matrix[x, :, y] = math.inf
+                prices[x, y, :] = math.inf
+                prices[x, :, y] = math.inf
+            else:
+                remaining_customers.append(y)
+
+        for y in range(len(remaining_customers)):
+            cus_map[y + 1] = remaining_customers[y]
+
+        cus_mappings.append(cus_map)
+
+        red_cor[x] = coords[x, coords[x, :, 0] != math.inf]
+        red_dems[x] = demands[x, demands[x, :] != math.inf]
+        red_tw[x] = time_windows[x, time_windows[x, :, 0] != math.inf]
+        red_duls[x] = duals[x, duals[x, :] != math.inf]
+        red_sts[x] = service_times[x, service_times[x, :] != math.inf]
+        tm = time_matrix[x, time_matrix[x, :, 0] != math.inf]
+        mask = (tm == math.inf)
+        idx = mask.any(axis=0)
+        red_tts[x] = tm[:, ~idx]
+
+        pm = prices[x, prices[x, :, 0] != math.inf]
+        mask = (pm == math.inf)
+        idx = mask.any(axis=0)
+        red_prices[x] = pm[:, ~idx]
+
+    print("The problem has been reduced to size: " + str(len(red_cor[0]) - 1))
+    return red_cor, red_dems, red_tw, red_duls, red_sts, red_tts, red_prices, cus_mappings
+
+
+class ESPRCTW_RL_solver(object):
+    def __init__(self, env, model, prices):
+        self.env = env
+        self.model = model
+        self.prices = prices
+
+    def train(self, steps):
+        pass
+
+    def evaluate(self):
+        pass
+
+    def return_real_reward(self, decisions):
+        real_rewards = torch.zeros((self.env.batch_size, self.env.pomo_size))
+        for x in range(self.env.batch_size):
+            for y in range(self.env.pomo_size):
+                real_rewards[x, y] = sum(
+                    [self.prices[x, int(decisions[r, x, y]), int(decisions[r + 1, x, y])] for r in
+                     range(len(decisions) - 1)])
+
+        return real_rewards * -1
+
+    def generate_columns(self):
+        self.model.eval()
+        with torch.no_grad():
+            reset_state, _, _ = self.env.reset()
+            self.model.pre_forward(reset_state)
+
+        # POMO Rollout
+        ###############################################
+        state, reward, done = self.env.pre_step()
+        decisions = torch.empty((0, self.env.batch_size, self.env.pomo_size), dtype=torch.float32)
+        while not done:
+            selected, _ = self.model(state)
+            decisions = torch.cat((decisions, selected[None, :, :]), dim=0)
+            # shape: (max episode length, batch, pomo)
+            state, reward, done = self.env.step(selected)
+            # shape: (batch, pomo)
+
+        # print(-1*reward)
+        real_rewards = self.return_real_reward(decisions)
+        real_rewards.requires_grad_(True)
+
+        best_rewards_indexes = real_rewards.argmin(dim=1)
+
+        best_columns = torch.tensor(decisions[:, :, best_rewards_indexes[0]], dtype=torch.int).tolist()
+
+        promising_columns = {}
+        for batch in range(self.env.batch_size):
+            negative_reduced_costs = real_rewards[batch, :] < -0.0000001
+            indices = negative_reduced_costs.nonzero()
+            promising_columns[batch] = []
+            for index in indices:
+                column = torch.tensor(decisions[:, batch, index], dtype=torch.int)
+                column = column.tolist()
+                promising_columns[batch].append(column)
+
+        return promising_columns, best_columns, torch.diagonal(real_rewards[:, best_rewards_indexes],0)
+
+
+class Node_Reduction(object):
+    def __init__(self, indices, coords):
+        self.indices = indices
+        self.coords = np.copy(coords)
+
+    def reduce_instance(self):
+        for x in range(len(self.coords)):
+            for y in range(1, len(self.coords[0])):
+                if y - 1 not in self.indices[x, :]:
+                    self.coords[x, y, :] = math.inf
+
+        return self.coords

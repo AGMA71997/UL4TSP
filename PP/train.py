@@ -4,16 +4,25 @@ from torch.nn import Linear
 import time
 from torch import tensor
 import torch.nn
-from utils import PP_Loss
+from utils import *
 import pickle
 from torch.utils.data import Dataset, DataLoader  # use pytorch dataloader
 from random import shuffle
 import numpy as np
 import argparse
+from ESPRCTWProblemDef import get_random_problems
+import sys
+
+sys.path.insert(0, r'C:/Users/abdug/Python/POMO-implementation/ESPRCTW/POMO')
+sys.path.insert(0, r'C:/Users/abdug/Python/POMO-implementation/ESPRCTW')
+from ESPRCTWEnv import ESPRCTWEnv as Env
+from ESPRCTWModel import ESPRCTWModel as Model
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=42, help='Random seed.')
 parser.add_argument('--num_of_nodes', type=int, default=200, help='Graph Size')
+parser.add_argument('--reduction_size', type=int, default=100, help='Remaining Nodes in Graph')
+parser.add_argument('--data_size', type=int, default=3000, help='no. of training instances')
 parser.add_argument('--lr', type=float, default=3e-3,
                     help='Learning Rate')
 parser.add_argument('--moment', type=int, default=1,
@@ -48,24 +57,20 @@ torch.backends.cudnn.benchmark = False
 torch.backends.cudnn.enabled = True
 torch.cuda.manual_seed(args.seed)
 np.random.seed(args.seed)
+
 ### load train instance
+LENGDATA = args.data_size
+problem_size = args.num_of_nodes
+depot_xy, coords, demands, time_windows, depot_time_window, duals, service_times, travel_times, prices = \
+    get_random_problems(LENGDATA, problem_size)
 
-pp_instances = None  # np.load('./data/train_tsp_instance_%d.npy' % args.num_of_nodes)
-NumofTestSample = pp_instances.shape[0]
+coords, time_windows, demands, service_times, duals = merge_with_depot(depot_xy, coords,
+                                                                       demands, time_windows, depot_time_window, duals,
+                                                                       service_times)
 
-coords = pp_instances[:, 0:2]
-time_windows = pp_instances[:, 2:4]
-duals = pp_instances[:, 4]
-Std = np.std(coords, axis=1)
-Mean = np.mean(coords, axis=1)
-
-coords = coords - Mean.reshape((NumofTestSample, 1, 2))
-
-coords = args.rescale * coords  # 2.0 is the rescale
-pp_sols = None  # np.load('./data/train_tsp_sol_%d.npy' % args.num_of_nodes)
+NumofTestSample = LENGDATA
 
 dataset_scale = 1
-LENGDATA = coords.shape[0]
 total_samples = int(np.floor(LENGDATA * dataset_scale))
 
 preposs_time = time.time()
@@ -73,57 +78,40 @@ preposs_time = time.time()
 from models import GNN
 
 # scattering model
-model = GNN(input_dim=5, hidden_dim=args.hidden, output_dim=args.num_of_nodes, n_layers=args.nlayers)
-from scipy.spatial import distance_matrix
-
+# model = GNN(input_dim=5, hidden_dim=args.hidden, output_dim=args.num_of_nodes, n_layers=args.nlayers)
+model = GNN(input_dim=5, hidden_dim=args.hidden, output_dim=1, n_layers=args.nlayers)
 
 ### count model parameters
-def count_parameters(model):
-    return sum(p.numel() for p in model.parameters() if p.requires_grad)
-
-
 print('Total number of parameters:')
 print(count_parameters(model))
 
 
-# dis_mat = distance_matrix(pp_instances[0],pp_instances[0])
-# https://docs.scipy.org/doc/scipy/reference/generated/scipy.spatial.distance_matrix.html
-def coord_to_adj(coord_arr, duals):
-    time_matrix = distance_matrix(coord_arr, coord_arr)
-    price_mat = pricing_matrix(time_matrix, duals)
-    return price_mat
-
-
-pp_instances_adj = np.zeros((LENGDATA, args.num_of_nodes, args.num_of_nodes))
-for i in range(LENGDATA):
-    pp_instances_adj[i] = coord_to_adj(coords[i], duals[i])
-
-
-# print(coord_to_adj(pp_instances[0]))
 class PP_Dataset(Dataset):
-    def __init__(self, co, tw, dul, data, targets):
+    def __init__(self, co, tw, dul, st, dems, t_matrix, p_matrix, ):
         self.coord = torch.FloatTensor(co)
         self.time_windows = torch.FloatTensor(tw)
         self.duals = torch.FloatTensor(dul)
-
-        self.data = torch.FloatTensor(data)
-        self.targets = torch.LongTensor(targets)
+        self.travel_times = torch.FloatTensor(t_matrix)
+        self.prices = torch.FloatTensor(p_matrix)
+        self.service_times = torch.FloatTensor(st)
+        self.demands = torch.FloatTensor(dems)
 
     def __getitem__(self, index):
         xy_pos = self.coord[index]
         tw = self.time_windows[index]
         dual = self.duals[index]
+        t_matrix = self.travel_times[index]
+        p_matrix = self.prices[index]
+        st = self.service_times[index]
+        dems = self.demands[index]
 
-        x = self.data[index]
-        y = self.targets[index]
-        return tuple(zip(xy_pos, tw, dual, x, y))
+        return tuple(zip(xy_pos, tw, dual, st, dems, t_matrix, p_matrix))
 
     def __len__(self):
-        return len(self.data)
+        return len(self.coord)
 
 
-# dataset = TSP_Dataset(TSP_instances, TSP_instances_adj, tsp_sols)
-dataset = PP_Dataset(coords, time_windows, duals, pp_instances_adj, pp_sols)
+dataset = PP_Dataset(coords, time_windows, duals, service_times, demands, travel_times, prices)
 
 num_trainpoints = 2000
 num_valpoints = total_samples - num_trainpoints
@@ -140,8 +128,33 @@ from torch.optim.lr_scheduler import StepLR
 optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.wdecay)
 scheduler = StepLR(optimizer, step_size=args.stepsize, gamma=0.8)
 model.cpu()  # cuda()
-mask = torch.ones(args.num_of_nodes, args.num_of_nodes).cpu()  # cuda()
-mask.fill_diagonal_(0)
+mask = torch.ones(args.num_of_nodes).cpu()  # cuda()
+
+model_params = {
+    'embedding_dim': 128,
+    'sqrt_embedding_dim': 128 ** (1 / 2),
+    'encoder_layer_num': 6,
+    'qkv_dim': 16,
+    'head_num': 8,
+    'logit_clipping': 10,
+    'ff_hidden_dim': 512,
+    'eval_type': 'argmax',
+}
+
+model_path = 'C:/Users/abdug/Python/POMO-implementation/ESPRCTW/POMO/result/model100_scaler_max_t_data'
+model_epoch = 160
+model_load = {
+    'path': model_path,
+    'epoch': model_epoch}
+
+env_params = {'problem_size': 100,
+              'pomo_size': 100}
+
+POMO = Model(**model_params)
+device = torch.device('cpu')
+checkpoint_fullname = '{path}/checkpoint-{epoch}.pt'.format(**model_load)
+checkpoint = torch.load(checkpoint_fullname, map_location=device)
+POMO.load_state_dict(checkpoint['model_state_dict'])
 
 
 def train(epoch):
@@ -149,22 +162,44 @@ def train(epoch):
     model.train()
     print('Epoch: %d' % epoch)
     for batch in train_loader:
-        f0 = batch[0].cpu()  # .cuda()
-        f1 = batch[2].cpu()
-        f2 = batch[3].cpu()
-        price_m = batch[4].cpu()  # .cuda()
-        adj = torch.exp(-1. * price_m / args.temperature)
-        adj *= mask
-        output = model(f0, f1, f2, adj) #We stopped here
-        TSPLoss_constaint, Heat_mat = TSPLoss(SctOutput=output, distance_matrix=distance_m,
-                                              num_of_nodes=args.num_of_nodes)
-        Heat_mat_diagonals = [torch.diagonal(mat) for mat in Heat_mat]
-        Heat_mat_diagonals = torch.stack(Heat_mat_diagonals, dim=0)
-        Nrmlzd_constraint = (1. - torch.sum(output, 2)) ** 2
-        Nrmlzd_constraint = torch.sum(Nrmlzd_constraint)
-        loss = args.C1_penalty * Nrmlzd_constraint + 1. * torch.sum(TSPLoss_constaint) + args.diag_loss * torch.sum(
-            Heat_mat_diagonals)
-        batchloss = torch.sum(loss) / len(batch[0])
+        cor = batch[0].cpu()
+        tw = batch[1].cpu()
+        dul = batch[2].cpu()
+        sts = batch[3].cpu()
+        dems = batch[4].cpu()
+        t_matrix = batch[5].cpu()
+        p_matrix = batch[6].cpu()
+
+        f0 = cor[:, 1:, :]  # .cuda()
+        f1 = tw[:, 1:, :]
+        f2 = dul[:, 1:]
+        dims = f2.shape
+        f2 = torch.reshape(f2, (dims[0], dims[1], 1))
+        X = torch.cat([f0, f1, f2], dim=2)
+        distance_m = batch[5].cpu()[:, 1:, 1:]
+        adj = torch.exp(-1. * distance_m / args.temperature)
+        # adj *= mask
+        output = model(X, adj)
+        sorted_indices = output.argsort(dim=1, descending=True)[:, :args.reduction_size]
+        # print(sorted_indices[:, 0:5].reshape((len(batch[0]), 5)))
+        NR = Node_Reduction(sorted_indices, cor)
+        red_cor = NR.reduce_instance()
+        red_cor, red_dem, red_tws, red_duals, red_sts, red_tms, red_prices, cus_mapping = reshape_problem(red_cor,
+                                                                                                          dems,
+                                                                                                          tw,
+                                                                                                          dul,
+                                                                                                          sts,
+                                                                                                          t_matrix,
+                                                                                                          p_matrix,
+                                                                                                          args.reduction_size + 1)
+
+        env = Env(**env_params)
+        env.declare_problem(red_cor, red_dem, red_tws, red_duals, red_sts, red_tms, red_prices, 1, len(batch[0]))
+        pp_rl_solver = ESPRCTW_RL_solver(env, POMO, red_prices)
+        promising_columns, best_columns, best_rewards = pp_rl_solver.generate_columns()
+
+        batchloss = torch.sum(best_rewards) / len(batch[0])
+        print(best_rewards)
 
         print('Loss: %.5f' % batchloss.item())
         optimizer.zero_grad()

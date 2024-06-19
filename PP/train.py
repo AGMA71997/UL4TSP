@@ -207,5 +207,5 @@ def train(epoch):
 for i in range(args.EPOCHS):
     train(i)
     if (i >= 200) and (i % 10 == 0):
-        torch.save(model.state_dict(), 'Saved_Models/TSP_%d/scatgnn_layer_%d_hid_%d_model_%d_temp_%.3f.pth' % (
+        torch.save(model.state_dict(), 'Saved_Models/PP_%d/scatgnn_layer_%d_hid_%d_model_%d_temp_%.3f.pth' % (
             args.num_of_nodes, args.nlayers, args.hidden, i, args.temperature))

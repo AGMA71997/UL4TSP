@@ -83,8 +83,8 @@ def create_duals(batch_size, problem_size, tw_scaler):
 def create_duals_2(batch_size, problem_size, time_matrix):
     duals = torch.zeros(size=(batch_size, problem_size), dtype=torch.float32)
     for x in range(batch_size):
-        scaler = 0.2 + 0.9 * numpy.random.random()
-        non_zeros = numpy.random.randint(3, problem_size + 1)
+        scaler = 1.1  # 0.2 + 0.9 * numpy.random.random()
+        non_zeros = numpy.random.randint(problem_size / 2, problem_size + 1)
         indices = list(range(problem_size))
         chosen = random.sample(indices, non_zeros)
         for index in chosen:

@@ -13,11 +13,11 @@ def count_parameters(model):
 
 def coord_to_adj(coord_arr, duals):
     time_matrix = distance_matrix(coord_arr, coord_arr)
-    prices = create_prices(time_matrix, duals)
+    prices = create_price(time_matrix, duals)
     return time_matrix, prices
 
 
-def create_prices(time_matrix, duals):
+def create_price(time_matrix, duals):
     if len(duals) < len(time_matrix):
         duals.insert(0, 0)
     assert duals[0] == 0 and len(duals) == len(time_matrix)
@@ -25,6 +25,12 @@ def create_prices(time_matrix, duals):
     prices = (time_matrix - duals) * -1
     np.fill_diagonal(prices, 0)
     return prices
+
+
+def remap_route(route, cus_mapping):
+    for x in range(1, len(route) - 1):
+        route[x] = cus_mapping[route[x]]
+    return route
 
 
 def merge_with_depot(depot_xy, coords, node_demand, time_windows, depot_time_window,
@@ -96,6 +102,48 @@ def reshape_problem(coords, demands, time_windows, duals, service_times, time_ma
     return red_cor, red_dems, red_tw, red_duls, red_sts, red_tts, red_prices, cus_mappings
 
 
+def reshape_problem_2(coords, demands, time_windows, service_times, time_matrix, prices):
+    coords = np.copy(coords)
+    demands = np.copy(demands)
+    time_windows = np.copy(time_windows)
+    service_times = np.copy(service_times)
+    time_matrix = np.copy(time_matrix)
+    prices = np.copy(prices)
+
+    remaining_customers = []
+    for x in range(1, len(coords)):
+        if coords[x, 0] == math.inf:
+            demands[x] = math.inf
+            time_windows[x, :] = math.inf
+            service_times[x] = math.inf
+            time_matrix[x, :] = math.inf
+            time_matrix[:, x] = math.inf
+            prices[x, :] = math.inf
+            prices[:, x] = math.inf
+        else:
+            remaining_customers.append(x)
+
+    cus_mapping = {}
+    for x in range(len(remaining_customers)):
+        cus_mapping[x + 1] = remaining_customers[x]
+
+    coords = coords[coords[:, 0] != math.inf]
+    demands = demands[demands[:] != math.inf]
+    time_windows = time_windows[time_windows[:, 0] != math.inf]
+    service_times = service_times[service_times[:] != math.inf]
+    time_matrix = time_matrix[time_matrix[:, 0] != math.inf]
+    mask = (time_matrix == math.inf)
+    idx = mask.any(axis=0)
+    time_matrix = time_matrix[:, ~idx]
+    prices = prices[prices[:, 0] != math.inf]
+    mask = (prices == math.inf)
+    idx = mask.any(axis=0)
+    prices = prices[:, ~idx]
+
+    print("The problem has been reduced to size: " + str(len(coords) - 1))
+    return coords, demands, time_windows, service_times, time_matrix, prices, cus_mapping
+
+
 class ESPRCTW_RL_solver(object):
     def __init__(self, env, model, prices):
         self.env = env
@@ -135,7 +183,6 @@ class ESPRCTW_RL_solver(object):
             state, reward, done = self.env.step(selected)
             # shape: (batch, pomo)
 
-        # print(-1*reward)
         real_rewards = self.return_real_reward(decisions)
         real_rewards.requires_grad_(True)
 
@@ -153,7 +200,7 @@ class ESPRCTW_RL_solver(object):
                 column = column.tolist()
                 promising_columns[batch].append(column)
 
-        return promising_columns, best_columns, torch.diagonal(real_rewards[:, best_rewards_indexes],0)
+        return promising_columns, best_columns, torch.diagonal(real_rewards[:, best_rewards_indexes], 0)
 
 
 class Node_Reduction(object):
@@ -167,4 +214,11 @@ class Node_Reduction(object):
                 if y - 1 not in self.indices[x, :]:
                     self.coords[x, y, :] = math.inf
 
+        return self.coords
+
+    def dual_based_elimination(self, duals):
+        N = len(self.coords)
+        for x in range(1, N):
+            if duals[x] == 0:
+                self.coords[x, :] = math.inf
         return self.coords

@@ -19,14 +19,14 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=42, help='Random seed.')
 parser.add_argument('--num_of_nodes', type=int, default=200, help='Graph Size')
 parser.add_argument('--reduction_size', type=int, default=100, help='Remaining Nodes in Graph')
-parser.add_argument('--data_size', type=int, default=3000, help='no. of training instances')
+parser.add_argument('--data_size', type=int, default=10, help='No. of training instances')
 parser.add_argument('--lr', type=float, default=3e-3,
                     help='Learning Rate')
 parser.add_argument('--moment', type=int, default=1,
                     help='scattering moment')
 parser.add_argument('--hidden', type=int, default=64,
                     help='Number of hidden units.')
-parser.add_argument('--batch_size', type=int, default=32,
+parser.add_argument('--batch_size', type=int, default=2,
                     help='batch_size')
 parser.add_argument('--nlayers', type=int, default=3,
                     help='num of layers')
@@ -75,7 +75,6 @@ preposs_time = time.time()
 from models import GNN
 
 # scattering model
-# model = GNN(input_dim=5, hidden_dim=args.hidden, output_dim=args.num_of_nodes, n_layers=args.nlayers)
 model = GNN(input_dim=5, hidden_dim=args.hidden, output_dim=1, n_layers=args.nlayers)
 
 ### count model parameters
@@ -138,7 +137,7 @@ model_params = {
     'eval_type': 'argmax',
 }
 
-model_path = 'C:/Users/abdug/Python/POMO-implementation/ESPRCTW/POMO/result/model100_scaler_max_t_data'
+model_path = 'model100_scaler_max_t_data'
 model_epoch = 160
 model_load = {
     'path': model_path,
@@ -178,7 +177,7 @@ def train(epoch):
         # adj *= mask
         output = model(X, adj)
         sorted_indices = output.argsort(dim=1, descending=True)[:, :args.reduction_size]
-        # print(sorted_indices[:, 0:5].reshape((len(batch[0]), 5)))
+        # print(sorted_indices[:, 0:10].reshape((len(batch[0]), 10)))
         NR = Node_Reduction(sorted_indices, cor)
         red_cor = NR.reduce_instance()
         red_cor, red_dem, red_tws, red_duals, red_sts, red_tms, red_prices, cus_mapping = reshape_problem(red_cor,
@@ -206,6 +205,6 @@ def train(epoch):
 
 for i in range(args.EPOCHS):
     train(i)
-    if (i >= 200) and (i % 10 == 0):
+    if (i >= 2) and (i % 10 == 0):
         torch.save(model.state_dict(), 'Saved_Models/PP_%d/scatgnn_layer_%d_hid_%d_model_%d_temp_%.3f.pth' % (
             args.num_of_nodes, args.nlayers, args.hidden, i, args.temperature))

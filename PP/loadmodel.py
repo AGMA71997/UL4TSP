@@ -4,15 +4,21 @@ from torch.nn import Linear
 import time
 from torch import tensor
 import torch.nn
-from utils import TSPLoss,edge_overlap,get_heat_map
 import pickle
-from torch.utils.data import  Dataset,DataLoader# use pytorch dataloader
+from torch.utils.data import Dataset, DataLoader  # use pytorch dataloader
 from random import shuffle
 import numpy as np
+from utils import *
 import argparse
+from ESPRCTWProblemDef import get_random_problems
+from ESPRCTWEnv import ESPRCTWEnv as Env
+from ESPRCTWModel import ESPRCTWModel as Model
+
 parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=42, help='Random seed.')
-parser.add_argument('--num_of_nodes', type=int, default=100, help='Graph Size')
+parser.add_argument('--num_of_nodes', type=int, default=200, help='Graph Size')
+parser.add_argument('--reduction_size', type=int, default=100, help='Remaining Nodes in Graph')
+parser.add_argument('--data_size', type=int, default=10, help='No. of training instances')
 parser.add_argument('--lr', type=float, default=1e-3,
                     help='Learning Rate')
 parser.add_argument('--smoo', type=float, default=0.1,
@@ -21,9 +27,9 @@ parser.add_argument('--moment', type=int, default=1,
                     help='scattering moment')
 parser.add_argument('--hidden', type=int, default=64,
                     help='Number of hidden units.')
-parser.add_argument('--batch_size', type=int, default=32,
+parser.add_argument('--batch_size', type=int, default=2,
                     help='batch_size')
-parser.add_argument('--nlayers', type=int, default=3,
+parser.add_argument('--nlayers', type=int, default=2,
                     help='num of layers')
 parser.add_argument('--use_smoo', action='store_true')
 parser.add_argument('--EPOCHS', type=int, default=20,
@@ -32,13 +38,13 @@ parser.add_argument('--penalty_coefficient', type=float, default=2.,
                     help='penalty_coefficient')
 parser.add_argument('--wdecay', type=float, default=0.0,
                     help='weight decay')
-parser.add_argument('--temperature', type=float, default=2.,
+parser.add_argument('--temperature', type=float, default=3.5,
                     help='temperature for adj matrix')
 parser.add_argument('--diag_penalty', type=float, default=3.,
                     help='penalty on the diag')
 parser.add_argument('--rescale', type=float, default=1.,
                     help='rescale for xy plane')
-parser.add_argument('--device', type=str, default='cuda',
+parser.add_argument('--device', type=str, default='cpu',
                     help='Device')
 args = parser.parse_args()
 torch.backends.cudnn.deterministic = True
@@ -47,168 +53,148 @@ torch.backends.cudnn.enabled = True
 torch.cuda.manual_seed(args.seed)
 device = args.device
 
+NumofTestSample = args.data_size
+problem_size = args.num_of_nodes
+depot_xy, coords, demands, time_windows, depot_time_window, duals, service_times, travel_times, prices = \
+    get_random_problems(NumofTestSample, problem_size)
 
-tsp_instances = np.load('./data/test_tsp_instance_%d.npy'%args.num_of_nodes) # 10,000 instances
-NumofTestSample = tsp_instances.shape[0]
-Std = np.std(tsp_instances, axis=1)
-Mean = np.mean(tsp_instances, axis=1)
+coords, time_windows, demands, service_times, duals = merge_with_depot(depot_xy, coords,
+                                                                       demands, time_windows, depot_time_window, duals,
+                                                                       service_times)
 
-
-tsp_instances = tsp_instances - Mean.reshape((NumofTestSample,1,2))
-
-tsp_instances = args.rescale * tsp_instances # 2.0 is the rescale
-
-tsp_sols = np.load('./data/test_tsp_sol_%d.npy'%args.num_of_nodes)
-total_samples = tsp_instances.shape[0]
-import json
+total_samples = args.data_size
 
 from models import GNN
-#scattering model
-model = GNN(input_dim=2, hidden_dim=args.hidden, output_dim=args.num_of_nodes, n_layers=args.nlayers)
-model = model.to(device)
-from scipy.spatial import distance_matrix
+
+# scattering model
+model = GNN(input_dim=5, hidden_dim=args.hidden, output_dim=1, n_layers=args.nlayers)
+# model = model.to(device)
 
 
 ### count model parameters
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
+
 print('Total number of parameters:')
 print(count_parameters(model))
 
 
-
-def coord_to_adj(coord_arr):
-    dis_mat = distance_matrix(coord_arr,coord_arr)
-    return dis_mat
-
-
-tsp_instances_adj = np.zeros((total_samples,args.num_of_nodes,args.num_of_nodes))
-for i in range(total_samples):
-    tsp_instances_adj[i] = coord_to_adj(tsp_instances[i])
-class TSP_Dataset(Dataset):
-    def __init__(self, coord,data, targets):
-        self.coord = torch.FloatTensor(coord)
-        self.data = torch.FloatTensor(data)
-        self.targets = torch.LongTensor(targets)
+class PP_Dataset(Dataset):
+    def __init__(self, co, tw, dul, st, dems, t_matrix, p_matrix, ):
+        self.coord = torch.FloatTensor(co)
+        self.time_windows = torch.FloatTensor(tw)
+        self.duals = torch.FloatTensor(dul)
+        self.travel_times = torch.FloatTensor(t_matrix)
+        self.prices = torch.FloatTensor(p_matrix)
+        self.service_times = torch.FloatTensor(st)
+        self.demands = torch.FloatTensor(dems)
 
     def __getitem__(self, index):
         xy_pos = self.coord[index]
-        x = self.data[index]
-        y = self.targets[index]
-#        tsp_instance = Data(coord=x,sol=y)
-        return tuple(zip(xy_pos,x,y))
+        tw = self.time_windows[index]
+        dual = self.duals[index]
+        t_matrix = self.travel_times[index]
+        p_matrix = self.prices[index]
+        st = self.service_times[index]
+        dems = self.demands[index]
+
+        return tuple(zip(xy_pos, tw, dual, st, dems, t_matrix, p_matrix))
 
     def __len__(self):
-        return len(self.data)
+        return len(self.coord)
 
-dataset = TSP_Dataset(tsp_instances,tsp_instances_adj,tsp_sols)
-testdata = dataset[0:] ##this is very important!
+
+dataset = PP_Dataset(coords, time_windows, duals, service_times, demands, travel_times, prices)
+
+testdata = dataset[0:]  ##this is very important!
 TestData_size = len(testdata)
 batch_size = args.batch_size
 test_loader = DataLoader(testdata, batch_size, shuffle=False)
-mask = torch.ones(args.num_of_nodes, args.num_of_nodes).to(device)
-mask.fill_diagonal_(0)
-def test(loader,topk = 20):
-    avg_size = 0
-    total_cost = 0.0
-    full_edge_overlap_count = 0
+mask = torch.ones(args.num_of_nodes).cpu()
 
+model_params = {
+    'embedding_dim': 128,
+    'sqrt_embedding_dim': 128 ** (1 / 2),
+    'encoder_layer_num': 6,
+    'qkv_dim': 16,
+    'head_num': 8,
+    'logit_clipping': 10,
+    'ff_hidden_dim': 512,
+    'eval_type': 'argmax',
+}
+
+model_path = 'model100_scaler_max_t_data'
+model_epoch = 160
+model_load = {
+    'path': model_path,
+    'epoch': model_epoch}
+
+env_params = {'problem_size': 100,
+              'pomo_size': 100}
+
+POMO = Model(**model_params)
+device = torch.device('cpu')
+checkpoint_fullname = '{path}/checkpoint-{epoch}.pt'.format(**model_load)
+checkpoint = torch.load(checkpoint_fullname, map_location=device)
+POMO.load_state_dict(checkpoint['model_state_dict'])
+
+
+def test(loader):
     TestData_size = len(loader.dataset)
-    Saved_indices = np.zeros((TestData_size,args.num_of_nodes,topk))
-    Saved_Values = np.zeros((TestData_size,args.num_of_nodes,topk))
-    Saved_sol = np.zeros((TestData_size,args.num_of_nodes+1))
-    Saved_pos = np.zeros((TestData_size,args.num_of_nodes,2))
-    count = 0
+    scores = []
     model.eval()
     for batch in loader:
-        batch_size = batch[0].size(0)
-        xy_pos = batch[0].to(device)
-        distance_m = batch[1].to(device)
-        sol = batch[2]
-        adj = torch.exp(-1.*distance_m/args.temperature)
-        adj *= mask
-        # start here:
-        t0 = time.time()
-        output = model(xy_pos,adj)
-        t1 = time.time()
-        Heat_mat = get_heat_map(SctOutput=output,num_of_nodes=args.num_of_nodes,device = device)
-        print('It takes %.5f seconds from instance: %d to %d'%(t1 - t0,count,count + batch_size))
-        sol_indicies = torch.topk(Heat_mat,topk,dim=2).indices
-        sol_values = torch.topk(Heat_mat,topk,dim=2).values
-#        print(sol_values.size())
-#        print(batch_size)
-        Saved_indices[count:batch_size+count] = sol_indicies.detach().cpu().numpy()
-        Saved_Values[count:batch_size+count] = sol_values.detach().cpu().numpy()
-        Saved_sol[count:batch_size+count] = sol.detach().cpu().numpy()
-        Saved_pos[count:batch_size+count] = xy_pos.detach().cpu().numpy()
-        count = count + batch_size
+        cor = batch[0].cpu()
+        tw = batch[1].cpu()
+        dul = batch[2].cpu()
+        sts = batch[3].cpu()
+        dems = batch[4].cpu()
+        t_matrix = batch[5].cpu()
+        p_matrix = batch[6].cpu()
+
+        f0 = cor[:, 1:, :]  # .cuda()
+        f1 = tw[:, 1:, :]
+        f2 = dul[:, 1:]
+        dims = f2.shape
+        f2 = torch.reshape(f2, (dims[0], dims[1], 1))
+        X = torch.cat([f0, f1, f2], dim=2)
+        distance_m = batch[5].cpu()[:, 1:, 1:]
+        adj = torch.exp(-1. * distance_m / args.temperature)
+        output = model(X, adj)
+        sorted_indices = output.argsort(dim=1, descending=True)[:, :args.reduction_size]
+        # print(sorted_indices[:, 0:5].reshape((len(batch[0]), 5)))
+        NR = Node_Reduction(sorted_indices, cor)
+        red_cor = NR.reduce_instance()
+        red_cor, red_dem, red_tws, red_duals, red_sts, red_tms, red_prices, cus_mapping = reshape_problem(red_cor,
+                                                                                                          dems,
+                                                                                                          tw,
+                                                                                                          dul,
+                                                                                                          sts,
+                                                                                                          t_matrix,
+                                                                                                          p_matrix,
+                                                                                                          args.reduction_size + 1)
+
+        env = Env(**env_params)
+        env.declare_problem(red_cor, red_dem, red_tws, red_duals, red_sts, red_tms, red_prices, 1, len(batch[0]))
+        pp_rl_solver = ESPRCTW_RL_solver(env, POMO, red_prices)
+        promising_columns, best_columns, best_rewards = pp_rl_solver.generate_columns()
+        loss = torch.sum(best_rewards) / len(batch[0])
+        scores.append(loss)
+
+    return scores
 
 
-    return Saved_indices,Saved_Values,Saved_sol,Saved_pos
+# PP200
+model_name = 'Saved_Models/PP_200/scatgnn_layer_2_hid_%d_model_290_temp_3.500.pth' % (args.hidden)
+checkpoint_main = torch.load(model_name, map_location=device)
+model.load_state_dict(checkpoint_main)
+scores = test(test_loader)
+print(scores)
 
-
-#TSP200
-model_name = 'Saved_Models/TSP_200/scatgnn_layer_2_hid_%d_model_210_temp_3.500.pth'%(args.hidden)# topk = 10
-model.load_state_dict(torch.load(model_name))
-#Saved_indices,Saved_Values,Saved_sol,Saved_pos = test(test_loader,topk = 8) # epoch=20>10 
-Saved_indices,Saved_Values,Saved_sol,Saved_pos = test(test_loader,topk = 20) # epoch=20>10
+'''
+checkpoint_fullname = '{path}/checkpoint-{epoch}.pt'.format(**model_load)
+checkpoint = torch.load(checkpoint_fullname, map_location=device)
+POMO.load_state_dict(checkpoint['model_state_dict'])'''
 
 print('Finish Inference!')
-
-
-idcs =  Saved_indices
-vals = Saved_Values
-HeatMap = np.zeros((idcs.shape[0],idcs.shape[1],idcs.shape[1])) #(2000,100,100)
-for i in range(idcs.shape[0]):
-    for j in range(idcs.shape[1]):
-        for s_k in range(idcs.shape[2]):
-            k = idcs[i][j][s_k]
-            k = int(k)
-            if not j==k:
-                HeatMap[i][j][k] = HeatMap[i][j][k] + vals[i][j][s_k]
-                HeatMap[i][k][j] = HeatMap[i][k][j] + vals[i][j][s_k]
-            else:
-                pass
-
-Heatidx = np.zeros((idcs.shape[0],idcs.shape[1],idcs.shape[1])) #(2000,100,100)
-
-for i in range(idcs.shape[0]):
-    for j in range(idcs.shape[1]):
-        for k in range(idcs.shape[1]):
-            Heatidx[i][j][k] = k
-
-
-
-import os, sys
-
-Q = Saved_pos
-A = Saved_sol 
-
-C = Heatidx
-V = HeatMap
-
-with open("1kTraning_TSP%dInstance_%d.txt"%(args.num_of_nodes,idcs.shape[0]), "w") as f:
-    for i in range(Q.shape[0]):
-        for j in range(Q.shape[1]):
-            f.write(str(Q[i][j][0]) + " " + str(Q[i][j][1]) + " ")
-        f.write("output ")
-        for j in range(A.shape[1]):
-            f.write(str(int(A[i][j] + 1)) + " ")
-        f.write("indices ")
-        for j in range(C.shape[1]):
-            for k in range(args.num_of_nodes):
-                if C[i][j][k] == j:
-                    f.write("-1" + " ")
-                else:
-                    f.write(str(int(C[i][j][k] + 1)) + " ")
-        f.write("value ")
-        for j in range(V.shape[1]):
-            for k in range(args.num_of_nodes):
-                f.write(str(V[i][j][k]) + " ")
-        f.write("\n")
-        if i == idcs.shape[0] - 1:
-            break
-
-
-

@@ -19,6 +19,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=42, help='Random seed.')
 parser.add_argument('--num_of_nodes', type=int, default=200, help='Graph Size')
 parser.add_argument('--reduction_size', type=int, default=100, help='Remaining Nodes in Graph')
+parser.add_argument('--POMO_path', type=str, default='model100_scaler_max_t_data', help='POMO model path')
+parser.add_argument('--POMO_epoch', type=int, default=160, help='POMO model epoch')
 parser.add_argument('--data_size', type=int, default=10, help='No. of training instances')
 parser.add_argument('--lr', type=float, default=3e-3,
                     help='Learning Rate')
@@ -137,14 +139,14 @@ model_params = {
     'eval_type': 'argmax',
 }
 
-model_path = 'model100_scaler_max_t_data'
-model_epoch = 160
+model_path = args.POMO_path
+model_epoch = args.POMO_epoch
 model_load = {
     'path': model_path,
     'epoch': model_epoch}
 
-env_params = {'problem_size': 100,
-              'pomo_size': 100}
+env_params = {'problem_size': args.reduction_size,
+              'pomo_size': args.reduction_size}
 
 POMO = Model(**model_params)
 device = torch.device('cpu')

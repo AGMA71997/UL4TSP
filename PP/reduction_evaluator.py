@@ -7,10 +7,11 @@ import random
 import numpy as np
 import argparse
 import torch
-import time
+import pickle
+import statistics
 
 
-def evaluate_reduction(LENGDATA, num_customers, model, temperature, reduction_size):
+def evaluate_reduction(LENGDATA, num_customers, model, temperature, reduction_size, MIP):
     depot_xy, coords, demands, time_windows, depot_time_window, duals, service_times, travel_times, prices = \
         get_random_problems(LENGDATA, num_customers)
     coords, time_windows, demands, service_times, duals = merge_with_depot(depot_xy, coords,
@@ -28,6 +29,7 @@ def evaluate_reduction(LENGDATA, num_customers, model, temperature, reduction_si
     adj = torch.exp(-1. * distance_m / temperature)
     output = model(X, adj)
     sorted_indices = output.argsort(dim=1, descending=True)[:, :reduction_size]
+    Scores = []
     print("Reduction Made")
 
     for x in range(LENGDATA):
@@ -43,7 +45,6 @@ def evaluate_reduction(LENGDATA, num_customers, model, temperature, reduction_si
 
         N = len(red_cor) - 1
         subproblem = Subproblem(N, 1, red_tms, red_dem, red_tws, red_sts, red_prices, [])
-        MIP = True
         if MIP:
             ordered_route, reduced_cost = subproblem.MIP_program()
         else:
@@ -64,6 +65,13 @@ def evaluate_reduction(LENGDATA, num_customers, model, temperature, reduction_si
         print("The number of missing customers is: " + str(miscount))
         print("----------------")
         print("")
+        Scores.append((miscount / len(ordered_route)))
+
+    print("On average, " + str(round(statistics.mean(Scores), 2) * 100) + "% of nodes are missing. ")
+    pickle_out = open('Reduction Results for N=' + str(num_customers) + " with reduction size " + str(reduction_size),
+                      'wb')
+    pickle.dump(Scores, pickle_out)
+    pickle_out.close()
 
 
 def main():
@@ -72,24 +80,29 @@ def main():
     torch.manual_seed(10)
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--num_customers', type=int, default=40)
+    parser.add_argument('--num_customers', type=int, default=30)
     parser.add_argument('--data_size', type=int, default=10, help='No. of evaluation instances')
     parser.add_argument('--device', type=str, default='cpu', help='Device')
     parser.add_argument('--reduction_size', type=int, default=20, help='Remaining Nodes in Graph')
     parser.add_argument('--hidden', type=int, default=64, help='Number of hidden units.')
     parser.add_argument('--temperature', type=float, default=3.5, help='temperature for adj matrix')
     parser.add_argument('--nlayers', type=int, default=2, help='num of layers')
+    parser.add_argument('--MIP', type=bool, default=True, help='use MIP for exact method.')
 
     args = parser.parse_args()
     num_customers = args.num_customers
     device = args.device
     LENGDATA = args.data_size
+    MIP = args.MIP
+
+    print("Instances are of size " + str(args.num_customers))
 
     model = GNN(input_dim=5, hidden_dim=args.hidden, output_dim=1, n_layers=args.nlayers)
-    model_name = 'Saved_Models/PP_200/scatgnn_layer_2_hid_%d_model_290_temp_3.500.pth' % (args.hidden)
+    model_name = 'Saved_Models/PP_%d/scatgnn_layer_2_hid_%d_model_290_temp_3.500.pth' % (
+    args.num_customers, args.hidden)
     checkpoint_main = torch.load(model_name, map_location=device)
     model.load_state_dict(checkpoint_main)
-    evaluate_reduction(LENGDATA, num_customers, model, args.temperature, args.reduction_size)
+    evaluate_reduction(LENGDATA, num_customers, model, args.temperature, args.reduction_size, MIP)
 
 
 if __name__ == "__main__":

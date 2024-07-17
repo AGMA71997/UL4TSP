@@ -241,9 +241,9 @@ class Subproblem:
         model.ModelSense = GRB.MINIMIZE
         model.update()
         model.setParam('MIPGap', 0.05)
-        # model.setParam('OutputFlag', False)
+        model.setParam('OutputFlag', False)
         model.optimize(subtourelim)
-        print(model.Status)
+        # print(model.Status)
 
         vals = model.getAttr('x', X)
         selected = tuplelist((i, j) for i, j in vals.keys() if vals[i, j] > 0.5)

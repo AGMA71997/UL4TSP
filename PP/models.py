@@ -82,8 +82,8 @@ class SCTConv(torch.nn.Module):
         # h_A: [b,n,f]
         # S4
         h_all = torch.cat((
-                          h_A.unsqueeze(dim=1), h_A2.unsqueeze(dim=1), h_sct1.unsqueeze(dim=1), h_sct2.unsqueeze(dim=1),
-                          h_sct3.unsqueeze(dim=1), h_sct4.unsqueeze(dim=1)), dim=1).view(B, 6, N, -1)
+            h_A.unsqueeze(dim=1), h_A2.unsqueeze(dim=1), h_sct1.unsqueeze(dim=1), h_sct2.unsqueeze(dim=1),
+            h_sct3.unsqueeze(dim=1), h_sct4.unsqueeze(dim=1)), dim=1).view(B, 6, N, -1)
         h_prime = torch.mul(attention, h_all)
         h_prime = torch.mean(h_prime, 1)  # (B,n,f)
         X = self.linear1(h_prime)
@@ -107,7 +107,7 @@ class GNN(nn.Module):
         self.mlp1 = nn.Linear(hidden_dim * (1 + n_layers), hidden_dim)
         self.mlp2 = nn.Linear(hidden_dim, output_dim)
         self.bn1 = nn.BatchNorm1d(hidden_dim)
-        self.m = nn.Softmax(dim=1)
+        self.m = nn.Softmax(dim=2)
     #        self.mlp1 = Linear(hidden_dim * (1 + n_layers), output_dim)
 
     def forward(self, X, adj, moment=1, device='cpu'):

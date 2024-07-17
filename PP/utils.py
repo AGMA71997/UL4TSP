@@ -17,6 +17,28 @@ def coord_to_adj(coord_arr, duals):
     return time_matrix, prices
 
 
+def check_route_feasibility(route, time_matrix, time_windows, service_times, demands_data, truck_capacity):
+    current_time = max(time_matrix[0, route[1]], time_windows[route[1], 0])
+    total_capacity = 0
+
+    for i in range(1, len(route)):
+        if current_time > time_windows[route[i], 1]:
+            print("Time Window violated")
+            print(route[i])
+            return False
+        current_time += service_times[route[i]]
+        total_capacity += demands_data[route[i]]
+        if total_capacity > truck_capacity:
+            print("Truck Capacity Violated")
+            print(route[i])
+            return False
+        if i < len(route) - 1:
+            # travel to next node
+            current_time += time_matrix[route[i], route[i + 1]]
+            current_time = max(current_time, time_windows[route[i + 1], 0])
+    return True
+
+
 def create_price(time_matrix, duals):
     if len(duals) < len(time_matrix):
         duals.insert(0, 0)

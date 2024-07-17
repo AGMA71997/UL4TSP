@@ -43,8 +43,16 @@ def evaluate_reduction(LENGDATA, num_customers, model, temperature, reduction_si
 
         N = len(red_cor) - 1
         subproblem = Subproblem(N, 1, red_tms, red_dem, red_tws, red_sts, red_prices, [])
-        ordered_route, reduced_cost, top_labels = subproblem.solve()
+        MIP = True
+        if MIP:
+            ordered_route, reduced_cost = subproblem.MIP_program()
+        else:
+            ordered_route, reduced_cost, top_labels = subproblem.solve()
+
         ordered_route = remap_route(ordered_route, cus_mapping)
+
+        print(ordered_route)
+        print(reduced_cost)
         print("subproblem solved")
 
         miscount = 0
@@ -52,19 +60,22 @@ def evaluate_reduction(LENGDATA, num_customers, model, temperature, reduction_si
             if node != 0 and node not in sorted_indices[x]:
                 miscount += 1
 
-        print("The length of the optimal route is: "+str(len(ordered_route)))
+        print("The length of the optimal route is: " + str(len(ordered_route)))
         print("The number of missing customers is: " + str(miscount))
+        print("----------------")
+        print("")
 
 
 def main():
     random.seed(10)
     np.random.seed(10)
+    torch.manual_seed(10)
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--num_customers', type=int, default=100)
-    parser.add_argument('--data_size', type=int, default=50, help='No. of evaluation instances')
+    parser.add_argument('--num_customers', type=int, default=40)
+    parser.add_argument('--data_size', type=int, default=10, help='No. of evaluation instances')
     parser.add_argument('--device', type=str, default='cpu', help='Device')
-    parser.add_argument('--reduction_size', type=int, default=15, help='Remaining Nodes in Graph')
+    parser.add_argument('--reduction_size', type=int, default=20, help='Remaining Nodes in Graph')
     parser.add_argument('--hidden', type=int, default=64, help='Number of hidden units.')
     parser.add_argument('--temperature', type=float, default=3.5, help='temperature for adj matrix')
     parser.add_argument('--nlayers', type=int, default=2, help='num of layers')

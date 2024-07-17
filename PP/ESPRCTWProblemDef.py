@@ -12,14 +12,14 @@ def get_random_problems(batch_size, problem_size):
     node_xy = torch.rand(size=(batch_size, problem_size, 2))
     # shape: (batch, problem, 2)
 
-    if problem_size == 20:
+    if problem_size == 20 or problem_size == 30 or problem_size==10:
         demand_scaler = 30
-    elif problem_size == 50:
+    elif problem_size == 50 or problem_size==40:
         demand_scaler = 40
     elif problem_size == 100:
         demand_scaler = 50
     elif problem_size == 200:
-        demand_scaler = 100
+        demand_scaler = 80
     else:
         raise NotImplementedError
 

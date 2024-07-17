@@ -1,5 +1,7 @@
 from utils import *
 from threading import Thread
+from gurobipy import *
+from itertools import combinations
 
 
 class Subproblem:
@@ -14,7 +16,7 @@ class Subproblem:
         self.service_times = service_times
         self.forbidden_edges = forbidden_edges
 
-        self.price = price*-1
+        self.price = price * -1
 
         self.primal_bound = 0
         self.primal_label = []
@@ -32,7 +34,6 @@ class Subproblem:
         self.increment = increment
         self.no_of_increments = math.ceil(self.time_windows[0, 1] / self.increment - 1)
         self.bounds = np.zeros((self.num_customers, self.no_of_increments)) + math.inf
-        self.supreme_labels = {}
         stopping_inc = math.ceil(stopping_time / self.increment - 1)
 
         for inc in range(self.no_of_increments, stopping_inc, -1):
@@ -50,17 +51,16 @@ class Subproblem:
                 thread = Bound_Threader(target=self.bound_calculator, args=(start_point, current_label,
                                                                             remaining_capacity,
                                                                             current_time, current_price,
-                                                                            best_bound, solve))
+                                                                            best_bound, solve, inc))
                 thread.start()
                 threads.append(thread)
 
             for index, thread in enumerate(threads):
                 label, lower_bound = thread.join()
                 self.bounds[index, inc - 1] = lower_bound
-                self.supreme_labels[index + 1, inc] = label
 
     def bound_calculator(self, start_point, current_label, remaining_capacity, current_time,
-                         current_price, best_bound, solve):
+                         current_price, best_bound, solve, inc):
 
         if current_time > self.time_windows[start_point, 1] or remaining_capacity < 0:
             return [], math.inf
@@ -71,6 +71,10 @@ class Subproblem:
                     if current_price < self.primal_bound:
                         self.primal_bound = current_price
                         self.primal_label = current_label
+                else:
+                    cus = current_label[0]
+                    if current_price < self.bounds[cus - 1, inc - 1]:
+                        self.bounds[cus - 1, inc - 1] = current_price
             else:
                 current_price = 0
             return current_label, current_price
@@ -127,7 +131,7 @@ class Subproblem:
                         CT = math.inf
 
                 label, lower_bound = self.bound_calculator(j, copy_label, RC, CT, CP,
-                                                           best_bound, solve)
+                                                           best_bound, solve, inc)
 
                 if lower_bound < best_bound:
                     best_bound = lower_bound
@@ -137,7 +141,7 @@ class Subproblem:
 
     def solve(self):
 
-        self.determine_PULSE_bounds(self.time_windows[0, 1]/9, 0.5 * self.time_windows[0, 1])
+        self.determine_PULSE_bounds(self.time_windows[0, 1] / 100, 0.5 * self.time_windows[0, 1])
         print("Bounds Computed")
 
         threads = []
@@ -156,7 +160,7 @@ class Subproblem:
                 thread = Bound_Threader(target=self.bound_calculator, args=(start_point, current_label,
                                                                             remaining_capacity,
                                                                             current_time, current_price,
-                                                                            best_bound, solve))
+                                                                            best_bound, solve, None))
                 thread.start()
                 threads.append(thread)
 
@@ -172,6 +176,91 @@ class Subproblem:
         best_costs.remove(best_cost)
         promising_labels = [best_routes[x] for x in range(len(best_routes)) if best_costs[x] < -0.001]
         return best_route, best_cost, promising_labels
+
+    def MIP_program(self):
+
+        def subtourelim(model, where):
+            if where == GRB.Callback.MIPSOL:
+                # make a list of edges selected in the solution
+                vals = model.cbGetSolution(model._vars)
+                selected = tuplelist((i, j) for i, j in model._vars.keys()
+                                     if vals[i, j] > 0.5)
+                unvisited = list(set([edge[0] for edge in selected] + [edge[1] for edge in selected]))
+                unvisited.append(0)
+                # find the shortest cycle in the selected edge list
+                tour = subtour(selected, unvisited)
+                if len(tour) < len(unvisited):
+                    # add subtour elimination constr. for every pair of cities in tour
+                    model.cbLazy(quicksum(model._vars[i, j]
+                                          for i, j in combinations(tour, 2))
+                                 <= len(tour) - 1)
+
+        # Given a tuplelist of edges, find the shortest subtour
+        def subtour(edges, unvisited):
+            cycle = range(len(unvisited) + 1)  # initial length has 1 more city
+            while unvisited:  # true if list is non-empty
+                thiscycle = []
+                neighbors = unvisited
+                while neighbors:
+                    current = neighbors[0]
+                    thiscycle.append(current)
+                    unvisited.remove(current)
+                    neighbors = [j for i, j in edges.select(current, '*')
+                                 if j in unvisited]
+                if len(cycle) > len(thiscycle):
+                    cycle = thiscycle
+            return cycle
+
+        model = Model()
+
+        BigM = 10 ** 6
+        X = {}
+        R = {}
+        for i in range(self.num_customers + 1):
+            R[i] = model.addVar(lb=self.time_windows[i, 0], ub=self.time_windows[i, 1],
+                                vtype=GRB.CONTINUOUS)
+            for j in range(self.num_customers + 1):
+                if i != j:
+                    X[i, j] = model.addVar(obj=self.price[i, j], vtype=GRB.INTEGER)
+
+        model.addConstr(quicksum(X[0, j] for j in range(1, self.num_customers + 1)) == 1)
+        model.addConstr(quicksum(X[i, 0] for i in range(1, self.num_customers + 1)) == 1)
+        for i in range(1, self.num_customers + 1):
+            model.addConstr(quicksum(X[i, j] for j in range(self.num_customers + 1) if j != i) -
+                            quicksum(X[j, i] for j in range(self.num_customers + 1) if j != i) == 0)
+            for j in range(1, self.num_customers + 1):
+                if j != i:
+                    model.addConstr(R[i] + self.service_times[i] + self.time_matrix[i, j]
+                                    - BigM * (1 - X[i, j]) <= R[j])
+
+        model.addConstr(quicksum(self.demands[i] * quicksum(X[i, j] for j in range(self.num_customers + 1) if j != i)
+                                 for i in range(self.num_customers + 1)) <= self.vehicle_capacity)
+
+        model.Params.lazyConstraints = 1
+        model._vars = X
+        model.ModelSense = GRB.MINIMIZE
+        model.update()
+        model.setParam('MIPGap', 0.05)
+        # model.setParam('OutputFlag', False)
+        model.optimize(subtourelim)
+        print(model.Status)
+
+        vals = model.getAttr('x', X)
+        selected = tuplelist((i, j) for i, j in vals.keys() if vals[i, j] > 0.5)
+        unvisited = list(set([edge[0] for edge in selected] + [edge[1] for edge in selected]))
+        unvisited.append(0)
+
+        tour = subtour(selected, unvisited)
+        # assert len(tour) == n
+
+        '''print('')
+        print('Optimal tour: %s' % str(tour))
+        print('Optimal cost: %g' % model.objVal)
+        print('')'''
+
+        return tour, model.objval
+
+    # Callback - use lazy constraints to eliminate sub-tours
 
 
 class Bound_Threader(Thread):

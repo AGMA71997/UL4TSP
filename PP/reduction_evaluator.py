@@ -28,7 +28,7 @@ def evaluate_reduction(LENGDATA, num_customers, model, temperature, reduction_si
     distance_m = travel_times.cpu()[:, 1:, 1:]
     adj = torch.exp(-1. * distance_m / temperature)
     output = model(X, adj)
-    sorted_indices = output.argsort(dim=1, descending=True)[:, :reduction_size]
+    sorted_indices = output.argsort(dim=1, descending=True)[:, :reduction_size, 0]
     Scores = []
     print("Reduction Made")
 
@@ -80,7 +80,7 @@ def main():
     torch.manual_seed(10)
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--num_customers', type=int, default=30)
+    parser.add_argument('--num_customers', type=int, default=40)
     parser.add_argument('--data_size', type=int, default=10, help='No. of evaluation instances')
     parser.add_argument('--device', type=str, default='cpu', help='Device')
     parser.add_argument('--reduction_size', type=int, default=20, help='Remaining Nodes in Graph')
@@ -97,7 +97,7 @@ def main():
 
     print("Instances are of size " + str(args.num_customers))
 
-    model = GNN(input_dim=5, hidden_dim=args.hidden, output_dim=1, n_layers=args.nlayers)
+    model = GNN(input_dim=5, hidden_dim=args.hidden, output_dim=2, n_layers=args.nlayers)
     model_name = 'Saved_Models/PP_%d/scatgnn_layer_2_hid_%d_model_290_temp_3.500.pth' % (
     args.num_customers, args.hidden)
     checkpoint_main = torch.load(model_name, map_location=device)

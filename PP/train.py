@@ -77,7 +77,7 @@ preposs_time = time.time()
 from models import GNN
 
 # scattering model
-model = GNN(input_dim=5, hidden_dim=args.hidden, output_dim=1, n_layers=args.nlayers)
+model = GNN(input_dim=5, hidden_dim=args.hidden, output_dim=2, n_layers=args.nlayers)
 
 ### count model parameters
 print('Total number of parameters:')
@@ -178,8 +178,7 @@ def train(epoch):
         adj = torch.exp(-1. * distance_m / args.temperature)
         # adj *= mask
         output = model(X, adj)
-        sorted_indices = output.argsort(dim=1, descending=True)[:, :args.reduction_size]
-        # print(sorted_indices[:, 0:10].reshape((len(batch[0]), 10)))
+        sorted_indices = output.argsort(dim=1, descending=True)[:, :args.reduction_size, 0]
         NR = Node_Reduction(sorted_indices, cor)
         red_cor = NR.reduce_instance()
         red_cor, red_dem, red_tws, red_duals, red_sts, red_tms, red_prices, cus_mapping = reshape_problem(red_cor,

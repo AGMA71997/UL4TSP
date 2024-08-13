@@ -1,3 +1,5 @@
+import statistics
+
 import torch
 import torch.nn.functional as F
 from torch.nn import Linear
@@ -16,8 +18,10 @@ from ESPRCTWModel import ESPRCTWModel as Model
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=42, help='Random seed.')
-parser.add_argument('--num_of_nodes', type=int, default=200, help='Graph Size')
-parser.add_argument('--reduction_size', type=int, default=100, help='Remaining Nodes in Graph')
+parser.add_argument('--num_of_nodes', type=int, default=30, help='Graph Size')
+parser.add_argument('--reduction_size', type=int, default=30, help='Remaining Nodes in Graph')
+parser.add_argument('--POMO_path', type=str, default='model20_scaler2_max_t_data', help='POMO model path')
+parser.add_argument('--POMO_epoch', type=int, default=200, help='POMO model epoch')
 parser.add_argument('--data_size', type=int, default=10, help='No. of training instances')
 parser.add_argument('--lr', type=float, default=1e-3,
                     help='Learning Rate')
@@ -29,19 +33,15 @@ parser.add_argument('--hidden', type=int, default=64,
                     help='Number of hidden units.')
 parser.add_argument('--batch_size', type=int, default=2,
                     help='batch_size')
-parser.add_argument('--nlayers', type=int, default=2,
+parser.add_argument('--nlayers', type=int, default=3,
                     help='num of layers')
 parser.add_argument('--use_smoo', action='store_true')
-parser.add_argument('--EPOCHS', type=int, default=20,
-                    help='epochs to train')
-parser.add_argument('--penalty_coefficient', type=float, default=2.,
-                    help='penalty_coefficient')
+parser.add_argument('--epoch', type=int, default=20,
+                    help='Training epochs of loaded model')
 parser.add_argument('--wdecay', type=float, default=0.0,
                     help='weight decay')
 parser.add_argument('--temperature', type=float, default=3.5,
                     help='temperature for adj matrix')
-parser.add_argument('--diag_penalty', type=float, default=3.,
-                    help='penalty on the diag')
 parser.add_argument('--rescale', type=float, default=1.,
                     help='rescale for xy plane')
 parser.add_argument('--device', type=str, default='cpu',
@@ -67,7 +67,7 @@ total_samples = args.data_size
 from models import GNN
 
 # scattering model
-model = GNN(input_dim=5, hidden_dim=args.hidden, output_dim=1, n_layers=args.nlayers)
+model = GNN(input_dim=5, hidden_dim=args.hidden, output_dim=2, n_layers=args.nlayers)
 # model = model.to(device)
 
 
@@ -111,7 +111,6 @@ testdata = dataset[0:]  ##this is very important!
 TestData_size = len(testdata)
 batch_size = args.batch_size
 test_loader = DataLoader(testdata, batch_size, shuffle=False)
-mask = torch.ones(args.num_of_nodes).cpu()
 
 model_params = {
     'embedding_dim': 128,
@@ -124,14 +123,14 @@ model_params = {
     'eval_type': 'argmax',
 }
 
-model_path = 'model100_scaler_max_t_data'
-model_epoch = 160
+model_path = args.POMO_path
+model_epoch = args.POMO_epoch
 model_load = {
     'path': model_path,
     'epoch': model_epoch}
 
-env_params = {'problem_size': 100,
-              'pomo_size': 100}
+env_params = {'problem_size': args.reduction_size,
+              'pomo_size': args.reduction_size}
 
 POMO = Model(**model_params)
 device = torch.device('cpu')
@@ -156,13 +155,15 @@ def test(loader):
         f0 = cor[:, 1:, :]  # .cuda()
         f1 = tw[:, 1:, :]
         f2 = dul[:, 1:]
+        f3 = dems[:, 1:]
         dims = f2.shape
         f2 = torch.reshape(f2, (dims[0], dims[1], 1))
-        X = torch.cat([f0, f1, f2], dim=2)
+        f3 = torch.reshape(f3, (dims[0], dims[1], 1))
+        X = torch.cat([f0, f1, f2, f3], dim=2)
         distance_m = batch[5].cpu()[:, 1:, 1:]
         adj = torch.exp(-1. * distance_m / args.temperature)
         output = model(X, adj)
-        sorted_indices = output.argsort(dim=1, descending=True)[:, :args.reduction_size]
+        sorted_indices = output.argsort(dim=1, descending=True)[:, :args.reduction_size, 0]
         # print(sorted_indices[:, 0:5].reshape((len(batch[0]), 5)))
         NR = Node_Reduction(sorted_indices, cor)
         red_cor = NR.reduce_instance()
@@ -180,21 +181,17 @@ def test(loader):
         pp_rl_solver = ESPRCTW_RL_solver(env, POMO, red_prices)
         promising_columns, best_columns, best_rewards = pp_rl_solver.generate_columns()
         loss = torch.sum(best_rewards) / len(batch[0])
-        scores.append(loss)
+        scores.append(loss.item())
 
     return scores
 
 
 # PP200
-model_name = 'Saved_Models/PP_200/scatgnn_layer_2_hid_%d_model_290_temp_3.500.pth' % (args.hidden)
+model_name = 'Saved_Models/PP_%d/scatgnn_layer_%d_hid_%d_model_%d_temp_3.500.pth' % (args.num_of_nodes, args.nlayers, args.hidden, args.epoch)
 checkpoint_main = torch.load(model_name, map_location=device)
 model.load_state_dict(checkpoint_main)
 scores = test(test_loader)
 print(scores)
-
-'''
-checkpoint_fullname = '{path}/checkpoint-{epoch}.pt'.format(**model_load)
-checkpoint = torch.load(checkpoint_fullname, map_location=device)
-POMO.load_state_dict(checkpoint['model_state_dict'])'''
+print(statistics.mean(scores))
 
 print('Finish Inference!')

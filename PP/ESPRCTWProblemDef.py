@@ -12,9 +12,9 @@ def get_random_problems(batch_size, problem_size):
     node_xy = torch.rand(size=(batch_size, problem_size, 2))
     # shape: (batch, problem, 2)
 
-    if problem_size == 20 or problem_size == 30 or problem_size==10:
+    if problem_size == 20 or problem_size == 30 or problem_size == 10:
         demand_scaler = 30
-    elif problem_size == 50 or problem_size==40:
+    elif problem_size == 50 or problem_size == 40:
         demand_scaler = 40
     elif problem_size == 100:
         demand_scaler = 50
@@ -83,7 +83,7 @@ def create_duals(batch_size, problem_size, tw_scaler):
 def create_duals_2(batch_size, problem_size, time_matrix):
     duals = torch.zeros(size=(batch_size, problem_size), dtype=torch.float32)
     for x in range(batch_size):
-        scaler = 1.1  # 0.2 + 0.9 * numpy.random.random()
+        scaler = 1.1 + 0 * numpy.random.random()
         non_zeros = numpy.random.randint(problem_size / 2, problem_size + 1)
         indices = list(range(problem_size))
         chosen = random.sample(indices, non_zeros)

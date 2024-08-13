@@ -212,6 +212,7 @@ class Subproblem:
             return cycle
 
         model = Model()
+        model.setParam('OutputFlag', False)
 
         BigM = 10 ** 6
         X = {}
@@ -241,7 +242,6 @@ class Subproblem:
         model.ModelSense = GRB.MINIMIZE
         model.update()
         model.setParam('MIPGap', 0.05)
-        model.setParam('OutputFlag', False)
         model.optimize(subtourelim)
         # print(model.Status)
 

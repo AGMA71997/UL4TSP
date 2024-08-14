@@ -3,13 +3,11 @@ import random
 
 import torch
 import numpy
+from scipy.spatial import distance_matrix
 
 
 def get_random_problems(batch_size, problem_size):
-    depot_xy = torch.rand(size=(batch_size, 1, 2))
-    # shape: (batch, 1, 2)
-
-    node_xy = torch.rand(size=(batch_size, problem_size, 2))
+    coords = torch.rand(size=(batch_size, problem_size+1, 2))
     # shape: (batch, problem, 2)
 
     if problem_size == 20 or problem_size == 30 or problem_size == 10:
@@ -18,28 +16,47 @@ def get_random_problems(batch_size, problem_size):
         demand_scaler = 40
     elif problem_size == 100:
         demand_scaler = 50
-    elif problem_size == 200:
+    elif problem_size == 200 or problem_size == 500:
         demand_scaler = 80
     else:
         raise NotImplementedError
 
-    node_demand = torch.randint(1, 10, size=(batch_size, problem_size)) / float(demand_scaler)
-    # shape: (batch, problem)
-    depot_time_window = torch.tensor([0, 1]).repeat(batch_size, 1, 1)
-    # shape: (batch, 1, 2)
+    demand = torch.randint(1, 10, size=(batch_size, problem_size + 1)) / float(demand_scaler)
     tw_scalar = 18
-    time_windows = create_time_windows(batch_size, problem_size, tw_scalar) / float(tw_scalar)
-    service_times = create_service_times(batch_size, problem_size) / float(tw_scalar)
-    travel_times = create_time_matrix(batch_size, problem_size, node_xy, depot_xy)
+    # time_windows = create_time_windows(batch_size, problem_size, tw_scalar) / float(tw_scalar)
+    lower_tw = torch.randint(0, 10, (batch_size, problem_size + 1))
+    upper_tw = torch.randint(2, 8, (batch_size, problem_size + 1)) + lower_tw
+    time_windows = torch.zeros((batch_size, problem_size + 1, 2))
+    time_windows[:, :, 0] = lower_tw
+    time_windows[:, :, 1] = upper_tw
+    time_windows = time_windows / tw_scalar
+    # service_times = create_service_times(batch_size, problem_size) / float(tw_scalar)
+    service_times = torch.rand((batch_size, problem_size + 1)) * 0.3 + 0.2 / tw_scalar
+    # travel_times = create_time_matrix(batch_size, problem_size, node_xy, depot_xy)
+    travel_times = torch.zeros((batch_size, problem_size + 1, problem_size + 1))
+    prices = torch.zeros((batch_size, problem_size + 1, problem_size + 1))
+    duals = torch.zeros((batch_size, problem_size + 1))
+    for x in range(batch_size):
+        time_windows[x, 0] = torch.tensor([0, 1])
+        service_times[x, 0] = 0
+        demand[x, 0] = 0
+        travel_times[x] = torch.FloatTensor(distance_matrix(coords[x], coords[x]))
+        travel_times[x].fill_diagonal_(0)
+        duals[x] = create_duals_2(1, problem_size, travel_times)[0]
+        prices[x] = (travel_times[x] - duals[x]) * -1
+        min_val = torch.min(prices[x])
+        max_val = torch.max(prices[x])
+        prices[x] = prices[x] / max(abs(max_val), abs(min_val))
+        prices[x].fill_diagonal_(0)
+
     # duals = create_duals(batch_size, problem_size, tw_scalar)
-    duals = create_duals_2(batch_size, problem_size, travel_times)
-    prices = create_price(travel_times, duals)
-    travel_times = travel_times / float(tw_scalar)
-    duals = duals / float(tw_scalar)
+    # prices = create_price(travel_times, duals)
+    travel_times = travel_times / tw_scalar
+    duals = duals / tw_scalar
 
     # duals = torch.tensor(duals / tw_scalar, dtype=torch.float32)
     print("Dataset created")
-    return depot_xy, node_xy, node_demand, time_windows, depot_time_window, duals, service_times, travel_times, prices
+    return coords, demand, time_windows, duals, service_times, travel_times, prices
 
 
 def create_service_times(batch_size, problem_size):
@@ -81,14 +98,14 @@ def create_duals(batch_size, problem_size, tw_scaler):
 
 
 def create_duals_2(batch_size, problem_size, time_matrix):
-    duals = torch.zeros(size=(batch_size, problem_size), dtype=torch.float32)
+    duals = torch.zeros(size=(batch_size, problem_size + 1), dtype=torch.float32)
     for x in range(batch_size):
         scaler = 1.1 + 0 * numpy.random.random()
         non_zeros = numpy.random.randint(problem_size / 2, problem_size + 1)
-        indices = list(range(problem_size))
+        indices = list(range(1, problem_size + 1))
         chosen = random.sample(indices, non_zeros)
         for index in chosen:
-            duals[x, index] = torch.max(time_matrix[x, :, index + 1]) * scaler * numpy.random.random()
+            duals[x, index] = torch.max(time_matrix[x, :, index]) * scaler * numpy.random.random()
 
     return duals
 

@@ -203,7 +203,7 @@ class ESPRCTW_RL_solver(object):
         self.demands = demands
         self.tw_width = tw_width
 
-    def get_loss(self, sol_iter=1, baseline_score=0, dem_pen=0.15, tw_pen=0.05):
+    def get_loss(self, sol_iter=1, baseline_score=0, dem_pen=0.15, tw_pen=0.075):
         supreme_rewards = torch.zeros(self.env.batch_size)
         supreme_columns = {}
         for x in range(self.env.batch_size):

@@ -18,31 +18,27 @@ from ESPRCTWModel import ESPRCTWModel as Model
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=42, help='Random seed.')
-parser.add_argument('--num_of_nodes', type=int, default=50, help='Graph Size')
-parser.add_argument('--reduction_size', type=int, default=20, help='Remaining Nodes in Graph')
+parser.add_argument('--num_of_nodes', type=int, default=500, help='Graph Size')
+parser.add_argument('--reduction_size', type=int, default=100, help='Remaining Nodes in Graph')
 parser.add_argument('--POMO_path', type=str, default='model20_max_t_data_Nby2', help='POMO model path')
 parser.add_argument('--POMO_epoch', type=int, default=200, help='POMO model epoch')
-parser.add_argument('--data_size', type=int, default=500, help='No. of training instances')
+parser.add_argument('--data_size', type=int, default=100, help='No. of training instances')
 parser.add_argument('--lr', type=float, default=5e-3,
                     help='Learning Rate')
 parser.add_argument('--moment', type=int, default=1,
                     help='scattering moment')
 parser.add_argument('--hidden', type=int, default=64,
                     help='Number of hidden units.')
-parser.add_argument('--batch_size', type=int, default=32,
+parser.add_argument('--batch_size', type=int, default=8,
                     help='batch_size')
 parser.add_argument('--nlayers', type=int, default=3,
                     help='num of layers')
 parser.add_argument('--EPOCHS', type=int, default=100,
                     help='epochs to train')
-parser.add_argument('--penalty_coefficient', type=float, default=2.,
-                    help='penalty_coefficient')
 parser.add_argument('--wdecay', type=float, default=0.0,
                     help='weight decay')
 parser.add_argument('--temperature', type=float, default=3.5,
                     help='temperature for adj matrix')
-parser.add_argument('--rescale', type=float, default=2.,
-                    help='rescale for xy plane')
 parser.add_argument('--stepsize', type=int, default=10,
                     help='step size')
 parser.add_argument('--C1', type=float, default=1, help='loss score weight')
@@ -58,12 +54,7 @@ np.random.seed(args.seed)
 ### load train instance
 LENGDATA = args.data_size
 problem_size = args.num_of_nodes
-depot_xy, coords, demands, time_windows, depot_time_window, duals, service_times, travel_times, prices = \
-    get_random_problems(LENGDATA, problem_size)
-
-coords, time_windows, demands, service_times, duals = merge_with_depot(depot_xy, coords,
-                                                                       demands, time_windows, depot_time_window, duals,
-                                                                       service_times)
+coords, demands, time_windows, duals, service_times, travel_times, prices = get_random_problems(LENGDATA, problem_size)
 
 NumofTestSample = LENGDATA
 
@@ -179,7 +170,6 @@ def train(epoch, instance_baselines, excludes):
         distance_m = t_matrix[:, 1:, 1:]
         adj = torch.exp(-1. * distance_m / args.temperature)
         output = model(X, adj)
-        # print(output[0, 0:10, 0])
 
         if counter not in instance_baselines:
             env = Env(**{'problem_size': args.num_of_nodes, 'pomo_size': args.num_of_nodes})

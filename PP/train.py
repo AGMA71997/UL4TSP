@@ -61,7 +61,7 @@ preposs_time = time.time()
 from models import GNN
 
 # scattering model
-model = GNN(input_dim=5, hidden_dim=args.hidden, output_dim=2, n_layers=args.nlayers)
+model = GNN(input_dim=6, hidden_dim=args.hidden, output_dim=2, n_layers=args.nlayers)
 
 ### count model parameters
 print('Total number of parameters:')
@@ -154,11 +154,10 @@ def train(epoch):
         p_matrix = batch[6].cpu()
 
         f0 = cor[:, 1:, :]  # .cuda()
-        f1 = tw[:, 1:, 1] - tw[:, 1:, 0]
+        f1 = tw[:, 1:, :]
         f2 = dul[:, 1:]
         f3 = dems[:, 1:]
         dims = f2.shape
-        f1 = torch.reshape(f1, (dims[0], dims[1], 1))
         f2 = torch.reshape(f2, (dims[0], dims[1], 1))
         f3 = torch.reshape(f3, (dims[0], dims[1], 1))
         X = torch.cat([f0, f1, f2, f3], dim=2)

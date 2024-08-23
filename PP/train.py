@@ -1,35 +1,30 @@
-import torch
-import torch.nn.functional as F
-from torch.nn import Linear
 import time
-from torch import tensor
 import torch.nn
 from utils import *
-import pickle
 from torch.utils.data import Dataset, DataLoader  # use pytorch dataloader
-from random import shuffle
 import numpy as np
 import statistics
 import argparse
 from ESPRCTWProblemDef import get_random_problems
+from PP_exact_solver import Subproblem
 
 from ESPRCTWEnv import ESPRCTWEnv as Env
 from ESPRCTWModel import ESPRCTWModel as Model
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=42, help='Random seed.')
-parser.add_argument('--num_of_nodes', type=int, default=500, help='Graph Size')
-parser.add_argument('--reduction_size', type=int, default=100, help='Remaining Nodes in Graph')
+parser.add_argument('--num_of_nodes', type=int, default=50, help='Graph Size')
+parser.add_argument('--reduction_size', type=int, default=20, help='Remaining Nodes in Graph')
 parser.add_argument('--POMO_path', type=str, default='model20_max_t_data_Nby2', help='POMO model path')
 parser.add_argument('--POMO_epoch', type=int, default=200, help='POMO model epoch')
-parser.add_argument('--data_size', type=int, default=100, help='No. of training instances')
+parser.add_argument('--data_size', type=int, default=500, help='No. of training instances')
 parser.add_argument('--lr', type=float, default=5e-3,
                     help='Learning Rate')
 parser.add_argument('--moment', type=int, default=1,
                     help='scattering moment')
 parser.add_argument('--hidden', type=int, default=64,
                     help='Number of hidden units.')
-parser.add_argument('--batch_size', type=int, default=8,
+parser.add_argument('--batch_size', type=int, default=32,
                     help='batch_size')
 parser.add_argument('--nlayers', type=int, default=3,
                     help='num of layers')
@@ -124,7 +119,7 @@ model_params = {
     'head_num': 8,
     'logit_clipping': 10,
     'ff_hidden_dim': 512,
-    'eval_type': 'softmax',
+    'eval_type': 'argmax',
 }
 
 model_path = args.POMO_path
@@ -143,7 +138,7 @@ checkpoint = torch.load(checkpoint_fullname, map_location=device)
 POMO.load_state_dict(checkpoint['model_state_dict'])
 
 
-def train(epoch, instance_baselines, excludes):
+def train(epoch):
     scheduler.step()
     model.train()
     print('Epoch: %d' % epoch)
@@ -171,43 +166,50 @@ def train(epoch, instance_baselines, excludes):
         adj = torch.exp(-1. * distance_m / args.temperature)
         output = model(X, adj)
 
-        if counter not in instance_baselines:
-            env = Env(**{'problem_size': args.num_of_nodes, 'pomo_size': args.num_of_nodes})
-            env.declare_problem(cor, dems, tw, dul, sts, t_matrix, p_matrix, len(batch[0]))
-            pp_rl_solver = ESPRCTW_RL_solver(env, POMO)
-            _, _, baseloss, _ = pp_rl_solver.get_loss(sol_iter=10)
-
+        if counter not in Instance_Baselines:
             for inst in range(len(batch[0])):
-                instance_baselines[counter + inst] = baseloss[inst]
-                excludes[counter + inst] = [j - 1 for j in range(1, len(dul[inst])) if dul[inst, j] == 0]
+                Excludes[counter + inst] = [j - 1 for j in range(1, len(dul[inst])) if dul[inst, j] == 0]
+                env = Env(**{'problem_size': args.num_of_nodes, 'pomo_size': args.num_of_nodes})
+                env.declare_problem(cor, dems, tw, dul, sts, t_matrix, p_matrix, len(batch[0]))
+                pp_rl_solver = ESPRCTW_RL_solver(env, POMO)
+                _, _, baseloss, _ = pp_rl_solver.get_loss()
+                Instance_Baselines[counter + inst] = baseloss[inst]
 
         baselines = {}
         exclus = {}
         for inst in range(len(batch[0])):
-            baselines[inst] = instance_baselines[counter + inst]
-            exclus[inst] = excludes[counter + inst]
+            baselines[inst] = Instance_Baselines[counter + inst]
+            exclus[inst] = Excludes[counter + inst]
 
         indices = retain_indices(output, args.reduction_size)
+        loss = torch.zeros(len(batch[0]))
+        penalties = torch.zeros(len(batch[0]))
+        for x in range(len(batch[0])):
+            NR = Node_Reduction(indices[x:x + 1], coords[x:x + 1])
+            red_cor = NR.reduce_instance()[0]
+            red_cor, red_dem, red_tws, red_sts, red_tms, red_prices, cus_mapping = reshape_problem_2(red_cor,
+                                                                                                     demands[x],
+                                                                                                     time_windows[x],
+                                                                                                     service_times[x],
+                                                                                                     travel_times[x],
+                                                                                                     prices[x])
 
-        NR = Node_Reduction(indices, cor)
-        red_cor = NR.reduce_instance()
-        red_cor, red_dem, red_tws, red_duals, red_sts, red_tms, red_prices, cus_mapping = reshape_problem(red_cor,
-                                                                                                          dems,
-                                                                                                          tw,
-                                                                                                          dul,
-                                                                                                          sts,
-                                                                                                          t_matrix,
-                                                                                                          p_matrix,
-                                                                                                          args.reduction_size + 1)
-        env = Env(**env_params)
-        env.declare_problem(red_cor, red_dem, red_tws, red_duals, red_sts, red_tms, red_prices, len(batch[0]))
-        pp_rl_solver = ESPRCTW_RL_solver(env, POMO, output, indices, dul, cus_mapping, tw[:, :, 1] - tw[:, :, 0],
-                                         dems)
-        loss, best_columns, best_rewards, penalties = pp_rl_solver.get_loss(sol_iter=10, baseline_score=baselines)
+            N = len(red_cor) - 1
+            subproblem = Subproblem(N, 1, red_tms, red_dem, red_tws, red_sts, red_prices, [])
 
-        '''for inst in range(len(batch[0])):
-            if best_rewards[inst] < instance_baselines[counter + inst]:
-                instance_baselines[counter + inst] = best_rewards[inst]'''
+            if MIP:
+                ordered_route, reduced_cost = subproblem.MIP_program()
+            else:
+                ordered_route, reduced_cost, top_labels = subproblem.solve()
+
+            ordered_route = remap_route(ordered_route, cus_mapping)
+
+            penalties[x] = torch.sum(output[x, :, 0]) - args.reduction_size
+            penalties = torch.maximum(penalties, torch.zeros(penalties.shape))
+            factor = reduced_cost - baselines[x]
+            for node in ordered_route:
+                if node != 0:
+                    loss[x] = output[x, node - 1, 0] * - math.exp(dul[x, node] + abs(factor))
 
         batchloss = torch.sum(args.C1 * loss + args.C2 * penalties) / len(batch[0])
 
@@ -225,8 +227,9 @@ def train(epoch, instance_baselines, excludes):
 
 Instance_Baselines = {}
 Excludes = {}
+MIP = True
 for i in range(1, args.EPOCHS + 1):
-    train(i, Instance_Baselines, Excludes)
+    train(i)
     if (i >= 2) and (i % 10 == 0):
         torch.save(model.state_dict(), 'Saved_Models/PP_%d/scatgnn_layer_%d_hid_%d_model_%d_temp_%.3f.pth' % (
             args.num_of_nodes, args.nlayers, args.hidden, i, args.temperature))

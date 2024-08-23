@@ -187,7 +187,7 @@ def reshape_problem_2(coords, demands, time_windows, service_times, time_matrix,
     idx = mask.any(axis=0)
     prices = prices[:, ~idx]
 
-    print("The problem has been reduced to size: " + str(len(coords) - 1))
+    # print("The problem has been reduced to size: " + str(len(coords) - 1))
     return coords, demands, time_windows, service_times, time_matrix, prices, cus_mapping
 
 
@@ -245,20 +245,17 @@ class ESPRCTW_RL_solver(object):
             for x in range(dims[0]):
                 factor = supreme_rewards[x] - baseline_score[x]
                 for i in range(dims[1]):
+                    # if i in self.indices[x]:
+                    #losses[x] -= self.node_dist[x, i, 0] * self.duals[x, i + 1]
+                    #losses[x] += self.node_dist[x, i, 0] * max(
+                        # dem_pen * self.demands[x, i + 1] - tw_pen * self.tw_width[x, i + 1], 0)
                     if i in self.indices[x]:
-                        losses[x] -= self.node_dist[x, i, 0] * self.duals[x, i + 1]
-                        losses[x] += self.node_dist[x, i, 0] * max(
-                            dem_pen * self.demands[x, i + 1] - tw_pen * self.tw_width[x, i + 1], 0)
                         reduced_i = list(self.cus_mapping[x].keys())[list(self.cus_mapping[x].values()).index(i + 1)]
                         if reduced_i in supreme_columns[x]:
-                            # index_i = supreme_columns[x].index(reduced_i)
-                            # before_i = supreme_columns[x][index_i - 1]
-                            # gain_from_i = self.env.prices[x, before_i, reduced_i]
                             if factor < 0:
                                 losses[x] += self.node_dist[x, i, 0] * -math.exp(self.duals[x, i + 1] + abs(factor))
-
-                    else:
-                        losses[x] += self.node_dist[x, i, 1] * self.duals[x, i + 1]
+                    # else:
+                    # losses[x] += self.node_dist[x, i, 1] * self.duals[x, i + 1]
                     penalties[x] += self.node_dist[x, i, 0]
             penalties = penalties - self.env.problem_size
             penalties = torch.maximum(penalties, torch.zeros(penalties.shape))

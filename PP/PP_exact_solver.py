@@ -213,6 +213,7 @@ class Subproblem:
 
         model = Model()
         model.setParam('OutputFlag', False)
+        model.setParam('TimeLimit', 60)
 
         BigM = 10 ** 6
         X = {}

@@ -180,36 +180,48 @@ def train(epoch):
             baselines[inst] = Instance_Baselines[counter + inst]
             exclus[inst] = Excludes[counter + inst]
 
-        indices = retain_indices(output, args.reduction_size)
+        indices = retain_indices(output, args.reduction_size, policy="sampling", excludes=exclus)
         loss = torch.zeros(len(batch[0]))
         penalties = torch.zeros(len(batch[0]))
         for x in range(len(batch[0])):
-            NR = Node_Reduction(indices[x:x + 1], coords[x:x + 1])
-            red_cor = NR.reduce_instance()[0]
-            red_cor, red_dem, red_tws, red_sts, red_tms, red_prices, cus_mapping = reshape_problem_2(red_cor,
-                                                                                                     demands[x],
-                                                                                                     time_windows[x],
-                                                                                                     service_times[x],
-                                                                                                     travel_times[x],
-                                                                                                     prices[x])
+            index_key = tuple(indices[x])
+            if index_key not in Obj_Dict:
+                NR = Node_Reduction(indices[x:x + 1], coords[x:x + 1])
+                red_cor = NR.reduce_instance()[0]
+                red_cor, red_dem, red_tws, red_sts, red_tms, red_prices, cus_mapping = reshape_problem_2(red_cor,
+                                                                                                         demands[x],
+                                                                                                         time_windows[
+                                                                                                             x],
+                                                                                                         service_times[
+                                                                                                             x],
+                                                                                                         travel_times[
+                                                                                                             x],
+                                                                                                         prices[x])
 
-            N = len(red_cor) - 1
-            subproblem = Subproblem(N, 1, red_tms, red_dem, red_tws, red_sts, red_prices, [])
+                N = len(red_cor) - 1
+                subproblem = Subproblem(N, 1, red_tms, red_dem, red_tws, red_sts, red_prices, [])
 
-            if MIP:
-                ordered_route, reduced_cost = subproblem.MIP_program()
+                if MIP:
+                    ordered_route, reduced_cost = subproblem.MIP_program()
+                else:
+                    ordered_route, reduced_cost, top_labels = subproblem.solve()
+
+                ordered_route = remap_route(ordered_route, cus_mapping)
+                Obj_Dict[index_key] = (reduced_cost, ordered_route)
+
             else:
-                ordered_route, reduced_cost, top_labels = subproblem.solve()
-
-            ordered_route = remap_route(ordered_route, cus_mapping)
+                reduced_cost, ordered_route = Obj_Dict[index_key]
 
             penalties[x] = torch.sum(output[x, :, 0]) - args.reduction_size
-            penalties = torch.maximum(penalties, torch.zeros(penalties.shape))
             factor = reduced_cost - baselines[x]
-            for node in ordered_route:
-                if node != 0:
-                    loss[x] = output[x, node - 1, 0] * - math.exp(dul[x, node] + abs(factor))
+            if factor < 0:
+                for node in ordered_route:
+                    loss[x] += output[x, node - 1, 0] * - math.exp(dul[x, node] - factor)
+            '''else:
+                for node in indices[x]:
+                    loss[x] += output[x, int(node), 1] * - math.exp(dul[x, int(node)+1] - factor)'''
 
+        penalties = torch.maximum(penalties, torch.zeros(penalties.shape))
         batchloss = torch.sum(args.C1 * loss + args.C2 * penalties) / len(batch[0])
 
         Losses.append(batchloss.item())
@@ -226,6 +238,7 @@ def train(epoch):
 
 Instance_Baselines = {}
 Excludes = {}
+Obj_Dict = {}
 MIP = True
 for i in range(1, args.EPOCHS + 1):
     train(i)

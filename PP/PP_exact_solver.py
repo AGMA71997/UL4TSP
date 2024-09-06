@@ -16,7 +16,7 @@ class Subproblem:
         self.service_times = service_times
         self.forbidden_edges = forbidden_edges
 
-        self.price = price * -1
+        self.price = price
 
         self.primal_bound = 0
         self.primal_label = []
@@ -179,6 +179,7 @@ class Subproblem:
 
     def MIP_program(self):
 
+        # Callback - use lazy constraints to eliminate sub-tours
         def subtourelim(model, where):
             if where == GRB.Callback.MIPSOL:
                 # make a list of edges selected in the solution
@@ -244,7 +245,6 @@ class Subproblem:
         model.update()
         model.setParam('MIPGap', 0.05)
         model.optimize(subtourelim)
-        # print(model.Status)
 
         vals = model.getAttr('x', X)
         selected = tuplelist((i, j) for i, j in vals.keys() if vals[i, j] > 0.5)
@@ -252,16 +252,7 @@ class Subproblem:
         unvisited.append(0)
 
         tour = subtour(selected, unvisited)
-        # assert len(tour) == n
-
-        '''print('')
-        print('Optimal tour: %s' % str(tour))
-        print('Optimal cost: %g' % model.objVal)
-        print('')'''
-
         return tour, model.objval
-
-    # Callback - use lazy constraints to eliminate sub-tours
 
 
 class Bound_Threader(Thread):

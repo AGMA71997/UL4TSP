@@ -12,7 +12,7 @@ import numpy as np
 import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=42, help='Random seed.')
-parser.add_argument('--num_of_nodes', type=int, default=100, help='Graph Size')
+parser.add_argument('--num_of_nodes', type=int, default=200, help='Graph Size')
 parser.add_argument('--lr', type=float, default=1e-3,
                     help='Learning Rate')
 parser.add_argument('--smoo', type=float, default=0.1,
@@ -23,7 +23,7 @@ parser.add_argument('--hidden', type=int, default=64,
                     help='Number of hidden units.')
 parser.add_argument('--batch_size', type=int, default=32,
                     help='batch_size')
-parser.add_argument('--nlayers', type=int, default=3,
+parser.add_argument('--nlayers', type=int, default=2,
                     help='num of layers')
 parser.add_argument('--use_smoo', action='store_true')
 parser.add_argument('--EPOCHS', type=int, default=20,
@@ -38,7 +38,7 @@ parser.add_argument('--diag_penalty', type=float, default=3.,
                     help='penalty on the diag')
 parser.add_argument('--rescale', type=float, default=1.,
                     help='rescale for xy plane')
-parser.add_argument('--device', type=str, default='cuda',
+parser.add_argument('--device', type=str, default='cpu',
                     help='Device')
 args = parser.parse_args()
 torch.backends.cudnn.deterministic = True
@@ -131,6 +131,8 @@ def test(loader,topk = 20):
         # start here:
         t0 = time.time()
         output = model(xy_pos,adj)
+        Y, indices = torch.sort(output, 2, descending=True)
+        print(Y[0, 0, 0:10])
         t1 = time.time()
         Heat_mat = get_heat_map(SctOutput=output,num_of_nodes=args.num_of_nodes,device = device)
         print('It takes %.5f seconds from instance: %d to %d'%(t1 - t0,count,count + batch_size))
@@ -150,7 +152,7 @@ def test(loader,topk = 20):
 
 #TSP200
 model_name = 'Saved_Models/TSP_200/scatgnn_layer_2_hid_%d_model_210_temp_3.500.pth'%(args.hidden)# topk = 10
-model.load_state_dict(torch.load(model_name))
+model.load_state_dict(torch.load(model_name, map_location=torch.device('cpu')))
 #Saved_indices,Saved_Values,Saved_sol,Saved_pos = test(test_loader,topk = 8) # epoch=20>10 
 Saved_indices,Saved_Values,Saved_sol,Saved_pos = test(test_loader,topk = 20) # epoch=20>10
 

@@ -1,12 +1,7 @@
-'''
-adapted from Scattering GCN: Overcoming Oversmoothness in Graph Convolutional Networks
-'''
-import statistics
-
 import numpy as np
 import torch
-from scipy.spatial import distance_matrix
 import math
+import random
 
 
 def count_parameters(model):
@@ -44,6 +39,18 @@ def remap_route(route, cus_mapping):
 def retain_indices(output, reduction_size, policy="greedy", excludes=None):
     if policy == "greedy":
         indices = output.argsort(dim=1, descending=True)[:, :reduction_size, 0]
+    elif policy == "random":
+        indices = torch.zeros((0, reduction_size))
+        for x in range(len(output)):
+            exclude_indices_tensor = torch.tensor(excludes[x], dtype=torch.long)
+            all_indices = torch.arange(len(output[x]))
+            mask = torch.ones(len(output[x]), dtype=torch.bool)
+            mask[exclude_indices_tensor] = False
+            remaining_indices = all_indices[mask]
+            random_ids = torch.randperm(len(remaining_indices))[:reduction_size]
+            chosen = remaining_indices[random_ids]
+            chosen = torch.reshape(chosen, (1, reduction_size))
+            indices = torch.cat((indices, chosen), dim=0)
     else:
         indices = torch.zeros((0, reduction_size))
         for x in range(len(output)):
@@ -246,9 +253,9 @@ class ESPRCTW_RL_solver(object):
                 factor = supreme_rewards[x] - baseline_score[x]
                 for i in range(dims[1]):
                     # if i in self.indices[x]:
-                    #losses[x] -= self.node_dist[x, i, 0] * self.duals[x, i + 1]
-                    #losses[x] += self.node_dist[x, i, 0] * max(
-                        # dem_pen * self.demands[x, i + 1] - tw_pen * self.tw_width[x, i + 1], 0)
+                    # losses[x] -= self.node_dist[x, i, 0] * self.duals[x, i + 1]
+                    # losses[x] += self.node_dist[x, i, 0] * max(
+                    # dem_pen * self.demands[x, i + 1] - tw_pen * self.tw_width[x, i + 1], 0)
                     if i in self.indices[x]:
                         reduced_i = list(self.cus_mapping[x].keys())[list(self.cus_mapping[x].values()).index(i + 1)]
                         if reduced_i in supreme_columns[x]:
@@ -260,16 +267,7 @@ class ESPRCTW_RL_solver(object):
             penalties = penalties - self.env.problem_size
             penalties = torch.maximum(penalties, torch.zeros(penalties.shape))
 
-        '''promising_columns = {}
-        for batch in range(self.env.batch_size):
-            negative_reduced_costs = real_rewards[batch, :] < -0.0000001
-            indices = negative_reduced_costs.nonzero()
-            promising_columns[batch] = []
-            for index in indices:
-                column = torch.tensor(decisions[:, batch, index], dtype=torch.int)
-                column = column.tolist()
-                promising_columns[batch].append(column)
-        return promising_columns, best_columns, torch.diagonal(real_rewards[:, best_rewards_indexes], 0)'''
+       # SEE code_blocks.py
         return losses, supreme_columns, supreme_rewards, penalties
 
 

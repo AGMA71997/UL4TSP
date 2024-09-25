@@ -42,7 +42,7 @@ def get_random_problems(batch_size, problem_size):
         demands[x, 0] = 0
         travel_times[x] = torch.FloatTensor(distance_matrix(coords[x], coords[x]))
         travel_times[x].fill_diagonal_(0)
-        duals[x] = create_duals(1, problem_size, travel_times)[0]
+        duals[x] = create_duals(1, problem_size, travel_times[x:x+1])[0]
         prices[x] = travel_times[x] - duals[x]
         prices[x].fill_diagonal_(0)
         min_val = torch.min(prices[x])
@@ -50,7 +50,7 @@ def get_random_problems(batch_size, problem_size):
         prices[x] = prices[x] / max(abs(max_val), abs(min_val))
 
     travel_times = travel_times / tw_scalar
-    duals = duals / tw_scalar
+    duals = duals  # / tw_scalar
 
     print("Dataset created")
     return coords, demands, time_windows, duals, service_times, travel_times, prices
@@ -65,9 +65,9 @@ def create_service_times(batch_size, problem_size):
 
 def create_duals(batch_size, problem_size, time_matrix):
     duals = torch.zeros(size=(batch_size, problem_size + 1), dtype=torch.float32)
+    scaler = 0.25 + 0 * numpy.random.random()
     for x in range(batch_size):
-        non_zeros = numpy.random.randint(problem_size / 4, problem_size + 1)
-        scaler = 0.35 + (1 - non_zeros / problem_size)
+        non_zeros = numpy.random.randint(problem_size/2, problem_size + 1)
         indices = list(range(1, problem_size + 1))
         chosen = random.sample(indices, non_zeros)
         for index in chosen:

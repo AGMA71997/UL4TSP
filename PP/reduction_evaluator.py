@@ -20,18 +20,20 @@ def evaluate_reduction(LENGDATA, num_customers, model, temperature, reduction_si
 
     f0 = coords[:, 1:, :]
     f1 = duals[:, 1:]
+    f2 = prices[:, 0, 1:]
+    f3 = prices[:, 1:, 0]
     # f2 = time_windows[:, 1:, 1]-time_windows[:, 1:, 0]
     # f3 = demands[:, 1:]
     dims = f1.shape
     f1 = torch.reshape(f1, (dims[0], dims[1], 1))
-    # f2 = torch.reshape(f2, (dims[0], dims[1], 1))
-    # f3 = torch.reshape(f3, (dims[0], dims[1], 1))
-    X = torch.cat([f0, f1], dim=2)
+    f2 = torch.reshape(f2, (dims[0], dims[1], 1))
+    f3 = torch.reshape(f3, (dims[0], dims[1], 1))
+    X = torch.cat([f0, f1, f2, f3], dim=2)
     distance_m = prices[:, 1:, 1:]
     adj = torch.exp(-1. * distance_m / temperature)
     output = model(X, adj)
     probas = torch.sort(output, 1, descending=True)[0]
-    print(probas[0, :, 0])
+
     print("Reduction Made")
 
     sorted_indices = retain_indices(output, reduction_size)
@@ -47,13 +49,21 @@ def evaluate_reduction(LENGDATA, num_customers, model, temperature, reduction_si
     POMO_Dual = []
     Exact = []
     for x in range(LENGDATA):
-        '''print(statistics.mean(duals[x].tolist()))
-        print(sorted(duals[x].tolist(), reverse=True))
-        print(max(duals[x]))
-        non0 = [d for d in duals[x] if d > 0]
+        full_price_mean = torch.mean(prices[x], dim=0)
+        sorted_mean_price_rank = torch.sort(full_price_mean[1:], descending=False)[0][:reduction_size]
+        price_indeces = torch.argsort(full_price_mean[1:], descending=False)[:reduction_size]
+        # print(sorted_mean_price_rank)
+        # print(price_indeces.tolist())
+        # print(sorted_indices[x].tolist())
+        print(probas[x, :reduction_size, 0])
+        # print(torch.mean(torch.sort(f1[x, :reduction_size, :], descending=True)[0]))
+        non0 = np.array([float(d) for d in f1[x] if d > 0])
+        '''print(max(non0))
         print(min(non0))
         print(len(non0))
-        print("--------------")'''
+        print(statistics.mean(non0))
+        print((np.sort(non0 * -1) * -1)[:reduction_size])'''
+        print('-----------------')
 
         NR = Node_Reduction(sorted_indices[x:x + 1], coords[x:x + 1])
         red_cor = NR.reduce_instance()[0]
@@ -112,7 +122,7 @@ def evaluate_reduction(LENGDATA, num_customers, model, temperature, reduction_si
     print("On average, " + str(round(statistics.mean(Scores), 2)) + " nodes are missing. ")
     print("The mean exact score is: " + str(statistics.mean(Exact)))
     # print("where the mean POMO score with ML reduction is: " + str(statistics.mean(POMO_ML)))
-    print("as opposed to its score with simple dual reduction: " + str(statistics.mean(POMO_Dual)))
+    print("as opposed to its score with no reduction: " + str(statistics.mean(POMO_Dual)))
 
     pickle_out = open('Reduction Results for N=' + str(num_customers) + " with reduction size " + str(reduction_size),
                       'wb')
@@ -127,26 +137,26 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--num_customers', type=int, default=200)
-    parser.add_argument('--data_size', type=int, default=20, help='No. of evaluation instances')
+    parser.add_argument('--data_size', type=int, default=50, help='No. of evaluation instances')
     parser.add_argument('--device', type=str, default='cpu', help='Device')
-    parser.add_argument('--reduction_size', type=int, default=40, help='Remaining Nodes in Graph')
+    parser.add_argument('--reduction_size', type=int, default=1, help='Remaining Nodes in Graph')
     parser.add_argument('--hidden', type=int, default=64, help='Number of hidden units.')
-    parser.add_argument('--epochs', type=int, default=150, help='Number of training epochs used.')
+    parser.add_argument('--epochs', type=int, default=100, help='Number of training epochs used.')
     parser.add_argument('--temperature', type=float, default=3.5, help='temperature for adj matrix')
     parser.add_argument('--nlayers', type=int, default=2, help='num of layers')
     parser.add_argument('--MIP', type=bool, default=False, help='use MIP for exact method.')
-    parser.add_argument('--POMO_path', type=str, default='model50_max_t_data_Nby2', help='POMO model path')
+    parser.add_argument('--POMO_path', type=str, default='model20_max_t_data_Nby2', help='POMO model path')
     parser.add_argument('--POMO_epoch', type=int, default=200, help='POMO model epoch')
 
     args = parser.parse_args()
+    device = torch.device(args.device)
     num_customers = args.num_customers
-    device = args.device
     LENGDATA = args.data_size
     MIP = args.MIP
 
     print("Instances are of size " + str(args.num_customers))
 
-    model = GNN(input_dim=3, hidden_dim=args.hidden, output_dim=2, n_layers=args.nlayers)
+    model = GNN(input_dim=5, hidden_dim=args.hidden, output_dim=2, n_layers=args.nlayers)
     model_name = 'Saved_Models/PP_%d/scatgnn_layer_%d_hid_%d_model_%d_temp_3.500.pth' % \
                  (args.num_customers, args.nlayers, args.hidden, args.epochs)
     checkpoint_main = torch.load(model_name, map_location=device)
@@ -163,18 +173,17 @@ def main():
         'eval_type': 'argmax',
     }
 
-    model_path = args.POMO_path
-    model_epoch = args.POMO_epoch
-    model_load = {
-        'path': model_path,
-        'epoch': model_epoch}
+    POMO_path = args.POMO_path
+    POMO_epoch = args.POMO_epoch
+    POMO_load = {
+        'path': POMO_path,
+        'epoch': POMO_epoch}
 
     env_params = {'problem_size': num_customers,
                   'pomo_size': num_customers}
 
     POMO = Model(**POMO_params)
-    device = torch.device('cpu')
-    checkpoint_fullname = '{path}/checkpoint-{epoch}.pt'.format(**model_load)
+    checkpoint_fullname = '{path}/checkpoint-{epoch}.pt'.format(**POMO_load)
     checkpoint = torch.load(checkpoint_fullname, map_location=device)
     POMO.load_state_dict(checkpoint['model_state_dict'])
 

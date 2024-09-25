@@ -101,6 +101,29 @@ def merge_with_depot(depot_xy, coords, node_demand, time_windows, depot_time_win
     return coords, time_windows, demands, service_times, duals
 
 
+import numpy as np
+
+
+def calculate_compatibility(time_windows, travel_times, service_times):
+    n = len(travel_times)
+    earliest = time_windows[:, 0] + service_times + travel_times
+    feasibles = earliest - torch.reshape(time_windows[:, 1], (1, n))
+    earliest[feasibles > 0] = math.inf
+    latest = time_windows[:, 1] + service_times + travel_times
+    latest = torch.minimum(latest, torch.reshape(time_windows[:, 1], (1, n)))
+    latest[latest < earliest] = math.inf
+
+    waiting_early = torch.maximum(torch.reshape(time_windows[:, 0], (1, n)) - earliest, torch.zeros((n, n)))
+    waiting_early[earliest == math.inf] = math.inf
+    waiting_late = torch.maximum(torch.reshape(time_windows[:, 0], (1, n)) - latest, torch.zeros((n, n)))
+    waiting_late[latest == math.inf] = math.inf
+
+    TC_early = travel_times + waiting_early
+    TC_late = travel_times + waiting_late
+
+    return TC_early, TC_late
+
+
 def reshape_problem(coords, demands, time_windows, duals, service_times, time_matrix, prices, red_dim):
     coords = torch.clone(coords)
     demands = torch.clone(demands)
@@ -267,7 +290,7 @@ class ESPRCTW_RL_solver(object):
             penalties = penalties - self.env.problem_size
             penalties = torch.maximum(penalties, torch.zeros(penalties.shape))
 
-       # SEE code_blocks.py
+        # SEE code_blocks.py
         return losses, supreme_columns, supreme_rewards, penalties
 
 

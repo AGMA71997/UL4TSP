@@ -160,7 +160,7 @@ def test(loader):
         f2 = torch.reshape(f2, (dims[0], dims[1], 1))
         f3 = torch.reshape(f3, (dims[0], dims[1], 1))
         X = torch.cat([f0, f1, f2, f3], dim=2)
-        distance_m = batch[5].cpu()[:, 1:, 1:]
+        distance_m = t_matrix[:, 1:, 1:]
         adj = torch.exp(-1. * distance_m / args.temperature)
         output = model(X, adj)
         sorted_indices = output.argsort(dim=1, descending=True)[:, :args.reduction_size, 0]

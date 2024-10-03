@@ -17,15 +17,15 @@ def get_random_problems(batch_size, problem_size):
     elif problem_size == 100:
         demand_scaler = 50
     elif problem_size == 200 or problem_size == 500:
-        demand_scaler = 80
+        demand_scaler = 50
     else:
         raise NotImplementedError
 
     demands = torch.randint(1, 10, size=(batch_size, problem_size + 1)) / demand_scaler
     tw_scalar = 18
     # time_windows = create_time_windows(batch_size, problem_size, tw_scalar) / float(tw_scalar)
-    lower_tw = torch.randint(0, 11, (batch_size, problem_size + 1))
-    upper_tw = torch.randint(2, 9, (batch_size, problem_size + 1)) + lower_tw
+    lower_tw = torch.randint(0, 17, (batch_size, problem_size + 1))
+    upper_tw = torch.randint(1, 3, (batch_size, problem_size + 1)) + lower_tw
     time_windows = torch.zeros((batch_size, problem_size + 1, 2))
     time_windows[:, :, 0] = lower_tw
     time_windows[:, :, 1] = upper_tw

@@ -53,7 +53,7 @@ NumofTestSample = LENGDATA
 dataset_scale = 1
 total_samples = int(np.floor(LENGDATA * dataset_scale))
 
-neighborhood = 5
+neighborhood = 10
 TC = torch.zeros((LENGDATA, args.num_of_nodes + 1, args.num_of_nodes + 1))
 NN = torch.zeros((LENGDATA, args.num_of_nodes + 1, neighborhood))
 
@@ -182,7 +182,7 @@ def train(epoch):
 
         for x in range(len(batch[0])):
             # SEE code_block.py
-            pro_dist = torch.cat((torch.tensor([0]), output[x, :, 0]))
+            pro_dist = torch.cat((torch.tensor([1]), output[x, :, 0]))
 
             mat_prod = torch.matmul(torch.reshape(pro_dist, (1, args.num_of_nodes + 1)), p_mat_adj[x])
             loss[x] = torch.matmul(mat_prod, torch.reshape(pro_dist, (args.num_of_nodes + 1, 1)))

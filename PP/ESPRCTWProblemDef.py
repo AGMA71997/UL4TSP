@@ -65,7 +65,7 @@ def create_service_times(batch_size, problem_size):
 
 def create_duals(batch_size, problem_size, time_matrix):
     duals = torch.zeros(size=(batch_size, problem_size + 1), dtype=torch.float32)
-    scaler = 0.25 + 0 * numpy.random.random()
+    scaler = 0.2 + 0.9 * numpy.random.random()
     for x in range(batch_size):
         non_zeros = numpy.random.randint(problem_size/2, problem_size + 1)
         indices = list(range(1, problem_size + 1))

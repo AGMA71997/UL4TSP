@@ -12,7 +12,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=42, help='Random seed.')
 parser.add_argument('--num_of_nodes', type=int, default=200, help='Graph Size')
 parser.add_argument('--reduction_size', type=int, default=100, help='Remaining Nodes in Graph')
-parser.add_argument('--data_size', type=int, default=2000, help='No. of training instances')
+parser.add_argument('--data_size', type=int, default=5000, help='No. of training instances')
 parser.add_argument('--lr', type=float, default=5e-3,
                     help='Learning Rate')
 parser.add_argument('--moment', type=int, default=1,
@@ -23,7 +23,7 @@ parser.add_argument('--batch_size', type=int, default=32,
                     help='batch_size')
 parser.add_argument('--nlayers', type=int, default=2,
                     help='num of layers')
-parser.add_argument('--EPOCHS', type=int, default=100,
+parser.add_argument('--EPOCHS', type=int, default=80,
                     help='epochs to train')
 parser.add_argument('--wdecay', type=float, default=0.0,
                     help='weight decay')
@@ -55,27 +55,20 @@ total_samples = int(np.floor(LENGDATA * dataset_scale))
 
 neighborhood = 10
 TC = torch.zeros((LENGDATA, args.num_of_nodes + 1, args.num_of_nodes + 1))
-NN = torch.zeros((LENGDATA, args.num_of_nodes + 1, neighborhood))
 
 Price_Adj = torch.zeros((LENGDATA, args.num_of_nodes + 1, args.num_of_nodes + 1))
 TC_Adj = torch.zeros((LENGDATA, args.num_of_nodes + 1, args.num_of_nodes + 1))
 
 for x in range(LENGDATA):
     TC[x] = calculate_compatibility(time_windows[x], travel_times[x], service_times[x])[1]
-    cheapest_neighbors = torch.argsort(prices[x], dim=1)
+    disc_price = prices[x]*torch.exp(-1 * TC[x] - torch.reshape(demands[x], (1, len(demands[x]))))
+    cheapest_neighbors = torch.argsort(disc_price, dim=1)[:, :neighborhood]
     for j in range(args.num_of_nodes + 1):
-        cheap_and_feasible = []
         for k in cheapest_neighbors[j]:
             if TC[x, j, k] != math.inf and j != k:
-                cheap_and_feasible.append(k)
-                Price_Adj[x, j, k] = prices[x, j, k] * math.exp(-TC[x, j, k] - demands[x, k])
+                Price_Adj[x, j, k] = disc_price[j, k]
                 TC_Adj[x, j, k] = TC[x, j, k]
-                if len(cheap_and_feasible) == neighborhood:
-                    NN[x, j] = torch.tensor(cheap_and_feasible, dtype=torch.int)
-                    break
     print(x)
-
-preposs_time = time.time()
 
 from models import GNN
 

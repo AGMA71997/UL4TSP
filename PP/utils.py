@@ -124,6 +124,26 @@ def calculate_compatibility(time_windows, travel_times, service_times):
     return TC_early, TC_late
 
 
+def BE2(prices, alpha):
+    edge_count = math.ceil(alpha * len(prices) ** 2)
+    flattened_tensor = prices.flatten()
+
+    # Find the indices of the N lowest values
+    n_lowest_indices = torch.topk(flattened_tensor, edge_count, largest=False).indices
+
+    # Create a mask to set the rest of the values to 0
+    mask = torch.zeros_like(flattened_tensor, dtype=torch.bool)
+    mask[n_lowest_indices] = True
+
+    # Set the values that are not among the N lowest to 0
+    flattened_tensor[~mask] = 0
+
+    # Reshape the tensor back to its original 2D shape
+    red_prices = flattened_tensor.reshape(prices.shape)
+
+    return red_prices
+
+
 def reshape_problem(coords, demands, time_windows, duals, service_times, time_matrix, prices, red_dim):
     coords = torch.clone(coords)
     demands = torch.clone(demands)

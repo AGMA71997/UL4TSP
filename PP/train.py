@@ -1,3 +1,4 @@
+import math
 import random
 import time
 import torch.nn
@@ -53,7 +54,7 @@ NumofTestSample = LENGDATA
 dataset_scale = 1
 total_samples = int(np.floor(LENGDATA * dataset_scale))
 
-neighborhood = 10
+# neighborhood = 10
 TC = torch.zeros((LENGDATA, args.num_of_nodes + 1, args.num_of_nodes + 1))
 
 Price_Adj = torch.zeros((LENGDATA, args.num_of_nodes + 1, args.num_of_nodes + 1))
@@ -62,8 +63,13 @@ Targets = torch.zeros((LENGDATA, args.num_of_nodes + 1, args.num_of_nodes + 1))
 
 for x in range(LENGDATA):
     TC[x] = calculate_compatibility(time_windows[x], travel_times[x], service_times[x])[1]
-    disc_price = prices[x] * torch.exp(-1 * TC[x] - torch.reshape(demands[x], (1, len(demands[x]))))
-    Price_Adj[x] = disc_price  # BE2(disc_price, args.reduction_degree)
+    disc_price_neg = prices[x] * torch.exp(-1 * TC[x] - torch.reshape(demands[x], (1, len(demands[x]))))
+    Price_Adj[x, prices[x] < 0] = disc_price_neg[prices[x] < 0]
+    disc_price_pos = prices[x] * torch.exp(TC[x] + torch.reshape(demands[x], (1, len(demands[x]))))
+    Price_Adj[x, prices[x] > 0] = disc_price_pos[prices[x] > 0]
+    Price_Adj[x, TC[x] == math.inf] = 0
+    TC_Adj[x, TC[x] == math.inf] = 1
+    # BE2(disc_price, args.reduction_degree)
     # cheapest_neighbors = torch.argsort(disc_price, dim=1)[:, :neighborhood]
     # for j in range(args.num_of_nodes + 1):
     # Price_Adj[x, j, cheapest_neighbors[j]] = disc_price[j, cheapest_neighbors[j]]
@@ -82,7 +88,7 @@ print(count_parameters(model))
 
 
 class PP_Dataset(Dataset):
-    def __init__(self, co, tw, dul, st, dems, t_matrix, p_matrix, price_adj):
+    def __init__(self, co, tw, dul, st, dems, t_matrix, p_matrix, price_adj, tc_adj):
         self.coord = torch.FloatTensor(co)
         self.time_windows = torch.FloatTensor(tw)
         self.duals = torch.FloatTensor(dul)
@@ -91,6 +97,7 @@ class PP_Dataset(Dataset):
         self.service_times = torch.FloatTensor(st)
         self.demands = torch.FloatTensor(dems)
         self.price_adj = price_adj
+        self.tc_adj = tc_adj
 
     def __getitem__(self, index):
         xy_pos = self.coord[index]
@@ -101,15 +108,16 @@ class PP_Dataset(Dataset):
         st = self.service_times[index]
         dems = self.demands[index]
         price_adj = self.price_adj[index]
+        tc_adj = self.tc_adj[index]
 
-        return tuple(zip(xy_pos, tw, dual, st, dems, t_matrix, p_matrix, price_adj))
+        return tuple(zip(xy_pos, tw, dual, st, dems, t_matrix, p_matrix, price_adj, tc_adj))
 
     def __len__(self):
         return len(self.coord)
 
 
 dataset = PP_Dataset(coords, time_windows, duals, service_times, demands, travel_times, prices,
-                     Price_Adj)
+                     Price_Adj, TC_Adj)
 
 num_trainpoints = LENGDATA
 num_valpoints = total_samples - num_trainpoints
@@ -142,6 +150,7 @@ def train(epoch):
         dems = batch[4].cpu()
         p_matrix = batch[6].cpu()
         price_adj_mat = batch[7].cpu()
+        tc_adj_mat = batch[8].cpu()
 
         f0 = cor  # [:, 1:, :]
         f1 = dul  # [:, 1:]
@@ -167,7 +176,7 @@ def train(epoch):
         # SEE code_blocks.py
         loss = torch.zeros(len(batch[0]))
         depot_penalties = torch.zeros(len(batch[0]))
-        diag_penalties = torch.zeros(len(batch[0]))
+        infeas_penalties = torch.zeros(len(batch[0]))
         visit_penalties = torch.zeros(len(batch[0]))
 
         for x in range(len(batch[0])):
@@ -182,12 +191,12 @@ def train(epoch):
             depot_penalties[x] = torch.maximum(1 - torch.sum(output[x, :, 0]), torch.tensor(0))
             # select_penalties[x] = torch.square(torch.sum(output[x, :, 0]) - args.reduction_size)
 
-            diag_penalties[x] = torch.sum(torch.diag(output[x]))
+            infeas_penalties[x] = torch.sum(torch.diag(output[x]))  # + torch.sum(tc_adj_mat[x]*output[x])
             visit_penalties[x] = torch.sum(
                 torch.maximum(dul[x] / torch.max(dul[x]) - torch.sum(output[x], dim=0), torch.zeros(dims[1])))
 
         batchloss = torch.sum(args.C1 * loss + args.C2 * depot_penalties + args.C3 *
-                              diag_penalties + args.C4 * visit_penalties) / len(batch[0])
+                              infeas_penalties + args.C4 * visit_penalties) / len(batch[0])
         Losses.append(batchloss.item())
 
         print('Loss: %.5f' % batchloss.item())

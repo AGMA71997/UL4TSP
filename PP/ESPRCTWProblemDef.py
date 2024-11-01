@@ -18,6 +18,8 @@ def get_random_problems(batch_size, problem_size):
         demand_scaler = 50
     elif problem_size == 200 or problem_size == 500:
         demand_scaler = 50
+    elif problem_size == 1000:
+        demand_scaler = 80
     else:
         raise NotImplementedError
 
@@ -42,7 +44,7 @@ def get_random_problems(batch_size, problem_size):
         demands[x, 0] = 0
         travel_times[x] = torch.FloatTensor(distance_matrix(coords[x], coords[x]))
         travel_times[x].fill_diagonal_(0)
-        duals[x] = create_duals(1, problem_size, travel_times[x:x+1])[0]
+        duals[x] = create_duals(1, problem_size, travel_times[x:x + 1])[0]
         prices[x] = travel_times[x] - duals[x]
         prices[x].fill_diagonal_(0)
         min_val = torch.min(prices[x])
@@ -67,7 +69,7 @@ def create_duals(batch_size, problem_size, time_matrix):
     duals = torch.zeros(size=(batch_size, problem_size + 1), dtype=torch.float32)
     scaler = 0.2 + 0.9 * numpy.random.random()
     for x in range(batch_size):
-        non_zeros = numpy.random.randint(problem_size/2, problem_size + 1)
+        non_zeros = numpy.random.randint(problem_size / 2, problem_size + 1)
         indices = list(range(1, problem_size + 1))
         chosen = random.sample(indices, non_zeros)
         for index in chosen:

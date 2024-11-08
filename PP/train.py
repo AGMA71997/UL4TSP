@@ -13,7 +13,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=42, help='Random seed.')
 parser.add_argument('--num_of_nodes', type=int, default=200, help='Graph Size')
 # parser.add_argument('--reduction_degree', type=int, default=0.25, help='Remaining percentage of Arcs in Graph')
-parser.add_argument('--data_size', type=int, default=3000, help='No. of training instances')
+parser.add_argument('--data_size', type=int, default=500, help='No. of training instances')
 parser.add_argument('--lr', type=float, default=5e-3,
                     help='Learning Rate')
 parser.add_argument('--moment', type=int, default=1,
@@ -133,7 +133,7 @@ from torch.optim.lr_scheduler import StepLR
 # optimizer = torch.optim.RMSprop(model.parameters(), lr=args.lr,weight_decay=args.wdecay)
 optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.wdecay)
 scheduler = StepLR(optimizer, step_size=args.stepsize, gamma=0.8)
-model.cpu()  # cuda()
+model.cuda()
 
 
 def train(epoch):
@@ -143,14 +143,14 @@ def train(epoch):
     Losses = []
     counter = 0
     for batch in train_loader:
-        cor = batch[0].cpu()
-        tw = batch[1].cpu()
-        dul = batch[2].cpu()
-        sts = batch[3].cpu()
-        dems = batch[4].cpu()
-        p_matrix = batch[6].cpu()
-        price_adj_mat = batch[7].cpu()
-        tc_adj_mat = batch[8].cpu()
+        cor = batch[0].cuda()#cpu()
+        tw = batch[1].cuda()#.cpu()
+        dul = batch[2].cuda()#.cpu()
+        sts = batch[3].cuda()#.cpu()
+        dems = batch[4].cuda()#.cpu()
+        p_matrix = batch[6].cuda()#.cpu()
+        price_adj_mat = batch[7].cuda()#.cpu()
+        tc_adj_mat = batch[8].cuda()#.cpu()
 
         f0 = cor  # [:, 1:, :]
         f1 = dul  # [:, 1:]

@@ -18,7 +18,7 @@ def get_random_problems(batch_size, problem_size):
         demand_scaler = 50
     elif problem_size == 200 or problem_size == 500:
         demand_scaler = 50
-    elif problem_size == 1000:
+    elif problem_size == 1000 or problem_size == 800:
         demand_scaler = 80
     else:
         raise NotImplementedError

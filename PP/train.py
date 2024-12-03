@@ -20,7 +20,7 @@ parser.add_argument('--moment', type=int, default=1,
                     help='scattering moment')
 parser.add_argument('--hidden', type=int, default=64,
                     help='Number of hidden units.')
-parser.add_argument('--batch_size', type=int, default=32,
+parser.add_argument('--batch_size', type=int, default=64,
                     help='batch_size')
 parser.add_argument('--nlayers', type=int, default=2,
                     help='num of layers')
@@ -30,12 +30,13 @@ parser.add_argument('--wdecay', type=float, default=0.0,
                     help='weight decay')
 parser.add_argument('--temperature', type=float, default=3.5,
                     help='temperature for adj matrix')
-parser.add_argument('--stepsize', type=int, default=10,
+parser.add_argument('--stepsize', type=int, default=20,
                     help='step size')
 parser.add_argument('--C1', type=float, default=1, help='loss score weight')
-parser.add_argument('--C2', type=float, default=10, help='penalty for depot return')
-parser.add_argument('--C3', type=float, default=10, help='penalty for diagonal elements')
-parser.add_argument('--C4', type=float, default=0.5, help='penalty for not visiting other nodes')
+parser.add_argument('--C2', type=float, default=0, help='penalty for depot return')
+# parser.add_argument('--C3', type=float, default=0.1, help='  penalty for diagonal elements')
+parser.add_argument('--C4', type=float, default=0, help='penalty for not visiting other nodes')
+# parser.add_argument('--C5', type=float, default=10, help='penalty for normalizing constraint')
 
 args = parser.parse_args()
 torch.backends.cudnn.deterministic = True
@@ -67,14 +68,9 @@ for x in range(LENGDATA):
     Price_Adj[x, prices[x] < 0] = disc_price_neg[prices[x] < 0]
     disc_price_pos = prices[x] * torch.exp(TC[x] + torch.reshape(demands[x], (1, len(demands[x]))))
     Price_Adj[x, prices[x] > 0] = disc_price_pos[prices[x] > 0]
-    Price_Adj[x, TC[x] == math.inf] = 0
+    Price_Adj[x, TC[x] == math.inf] = 2
     TC_Adj[x, TC[x] == math.inf] = 1
-    # BE2(disc_price, args.reduction_degree)
-    # cheapest_neighbors = torch.argsort(disc_price, dim=1)[:, :neighborhood]
-    # for j in range(args.num_of_nodes + 1):
-    # Price_Adj[x, j, cheapest_neighbors[j]] = disc_price[j, cheapest_neighbors[j]]
-    # TC_Adj[x, j, cheapest_neighbors[j]] = TC[x, j, cheapest_neighbors[j]]
-
+    # print("Negatives: " + str(torch.sum(Price_Adj[x] < 0)))
     print(x)
 
 from models import GNN
@@ -125,7 +121,7 @@ sctdataset = dataset
 traindata = sctdataset[0:num_trainpoints]
 valdata = sctdataset[num_trainpoints:]
 batch_size = args.batch_size
-train_loader = DataLoader(traindata, batch_size, shuffle=True)
+train_loader = DataLoader(traindata, batch_size, shuffle=False)  ####### Originally Shuffled
 val_loader = DataLoader(valdata, batch_size, shuffle=False)
 
 from torch.optim.lr_scheduler import StepLR
@@ -133,7 +129,9 @@ from torch.optim.lr_scheduler import StepLR
 # optimizer = torch.optim.RMSprop(model.parameters(), lr=args.lr,weight_decay=args.wdecay)
 optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.wdecay)
 scheduler = StepLR(optimizer, step_size=args.stepsize, gamma=0.8)
-model.cuda()
+model.cpu()
+mask = torch.ones(problem_size + 1, problem_size + 1).cpu()
+mask.fill_diagonal_(0)
 
 
 def train(epoch):
@@ -141,72 +139,70 @@ def train(epoch):
     model.train()
     print('Epoch: %d' % epoch)
     Losses = []
-    counter = 0
     for batch in train_loader:
-        cor = batch[0].cuda()#cpu()
-        tw = batch[1].cuda()#.cpu()
-        dul = batch[2].cuda()#.cpu()
-        sts = batch[3].cuda()#.cpu()
-        dems = batch[4].cuda()#.cpu()
-        p_matrix = batch[6].cuda()#.cpu()
-        price_adj_mat = batch[7].cuda()#.cpu()
-        tc_adj_mat = batch[8].cuda()#.cpu()
+        cor = batch[0].cpu()
+        tw = batch[1].cpu()
+        dul = batch[2].cpu()
+        sts = batch[3].cpu()
+        dems = batch[4].cpu()
+        t_matrix = batch[5].cpu()
+        p_matrix = batch[6].cpu()
+        price_adj_mat = batch[7].cpu()
+        tc_adj_mat = batch[8].cpu()
 
         f0 = cor  # [:, 1:, :]
         f1 = dul  # [:, 1:]
         f2 = tw  # [:, 1:, :]
         f3 = dems  # [:, 1:]
         f4 = sts  # [:, 1:]
-        # f5 = p_matrix[:, 0, 1:]
-        # f6 = p_matrix[:, 1:, 0]
 
         dims = f1.shape
         f1 = torch.reshape(f1, (dims[0], dims[1], 1))
         f3 = torch.reshape(f3, (dims[0], dims[1], 1))
         f4 = torch.reshape(f4, (dims[0], dims[1], 1))
-        # f5 = torch.reshape(f5, (dims[0], dims[1], 1))
-        # f6 = torch.reshape(f6, (dims[0], dims[1], 1))
 
         X = torch.cat([f0, f1, f2, f3, f4], dim=2)
 
-        distance_m = p_matrix  # [:, 1:, 1:]
+        distance_m = price_adj_mat
         adj = torch.exp(-1. * distance_m / args.temperature)
+        adj *= mask
         output = model(X, adj)
 
-        # SEE code_blocks.py
-        loss = torch.zeros(len(batch[0]))
-        depot_penalties = torch.zeros(len(batch[0]))
-        infeas_penalties = torch.zeros(len(batch[0]))
+        point_wise_distance = torch.matmul(output, torch.roll(torch.transpose(output, 1, 2), -1, 1))
+        weighted_path = torch.mul(point_wise_distance, price_adj_mat)
+        weighted_path = weighted_path.sum(dim=(1, 2))
+
+        PPLoss_constaint, Heat_mat = weighted_path, point_wise_distance
+        Heat_mat_diagonals = [torch.diagonal(mat) for mat in Heat_mat]
+        Heat_mat_diagonals = torch.stack(Heat_mat_diagonals, dim=0)
+
+        '''depot_penalties = 1. - torch.sum(point_wise_distance[:, :, 0], 1)
+        depot_penalties = torch.maximum(depot_penalties, torch.zeros(depot_penalties.shape))'''
+
+        Nrmlzd_constraint = (1. - torch.sum(output, 2)) ** 2
+        Nrmlzd_constraint = torch.sum(Nrmlzd_constraint)
+
         visit_penalties = torch.zeros(len(batch[0]))
+        '''for x in range(len(batch[0])):
+            # loss[x] = torch.sum(output[x] * price_adj_mat[x])
+            # depot_penalties[x] = (1 - torch.sum(output[x, :, 0])) ** 2
+            # infeas_penalties[x] = torch.sum(torch.diag(output[x]))  # + torch.sum(tc_adj_mat[x]*output[x])
 
-        for x in range(len(batch[0])):
-            # SEE code_block.py
+            visit_penalties[x] = torch.sum(torch.maximum(dul[x, 1:] / torch.max(dul[x])
+                                                         - torch.sum(point_wise_distance[x, :, 1:], dim=0),
+                                                         torch.zeros(dims[1] - 1)))'''
 
-            loss[x] = torch.sum(output[x] * price_adj_mat[x])
+        loss = args.C5 * Nrmlzd_constraint + args.C1 * torch.sum(PPLoss_constaint) + \
+               args.C3 * torch.sum(Heat_mat_diagonals)
 
-            # pro_dist = torch.cat((torch.tensor([1]), output[x, :, 0]))
-            # mat_prod = torch.matmul(torch.reshape(pro_dist, (1, args.num_of_nodes + 1)), p_mat_adj[x])
-            # loss[x] = torch.matmul(mat_prod, torch.reshape(pro_dist, (args.num_of_nodes + 1, 1)))
-
-            depot_penalties[x] = torch.maximum(1 - torch.sum(output[x, :, 0]), torch.tensor(0))
-            # select_penalties[x] = torch.square(torch.sum(output[x, :, 0]) - args.reduction_size)
-
-            infeas_penalties[x] = torch.sum(torch.diag(output[x]))  # + torch.sum(tc_adj_mat[x]*output[x])
-            visit_penalties[x] = torch.sum(
-                torch.maximum(dul[x] / torch.max(dul[x]) - torch.sum(output[x], dim=0), torch.zeros(dims[1])))
-
-        batchloss = torch.sum(args.C1 * loss + args.C2 * depot_penalties + args.C3 *
-                              infeas_penalties + args.C4 * visit_penalties) / len(batch[0])
-        Losses.append(batchloss.item())
+        batchloss = torch.sum(loss) / len(batch[0])
 
         print('Loss: %.5f' % batchloss.item())
-        # probas = torch.sort(output, 1, descending=True)[0]
-        # print(probas[0, :, 0])
+        Losses.append(batchloss.item())
         optimizer.zero_grad()
         batchloss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1)
         optimizer.step()
-        counter += len(batch[0])
 
     print("The mean loss for epoch " + str(epoch) + " is: " + str(statistics.mean(Losses)))
 

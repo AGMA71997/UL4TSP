@@ -33,7 +33,7 @@ def get_random_problems(batch_size, problem_size):
     time_windows[:, :, 1] = upper_tw
     time_windows = time_windows / tw_scalar
     # service_times = create_service_times(batch_size, problem_size) / float(tw_scalar)
-    service_times = torch.rand((batch_size, problem_size + 1)) * 0.3 + 0.2 / tw_scalar
+    service_times = (torch.rand((batch_size, problem_size + 1)) * 0.3 + 0.2) / tw_scalar
     # travel_times = create_time_matrix(batch_size, problem_size, node_xy, depot_xy)
     travel_times = torch.zeros((batch_size, problem_size + 1, problem_size + 1))
     prices = torch.zeros((batch_size, problem_size + 1, problem_size + 1))

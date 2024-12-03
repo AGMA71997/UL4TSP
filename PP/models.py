@@ -107,7 +107,7 @@ class GNN(nn.Module):
         self.mlp1 = nn.Linear(hidden_dim * (1 + n_layers), hidden_dim)
         self.mlp2 = nn.Linear(hidden_dim, output_dim)
         self.bn1 = nn.BatchNorm1d(hidden_dim)
-        self.m = nn.Softmax(dim=2)
+        self.m = nn.Softmax(dim=1)
     #        self.mlp1 = Linear(hidden_dim * (1 + n_layers), output_dim)
 
     def forward(self, X, adj, moment=1, device='cuda'):

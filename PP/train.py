@@ -33,10 +33,10 @@ parser.add_argument('--temperature', type=float, default=3.5,
 parser.add_argument('--stepsize', type=int, default=20,
                     help='step size')
 parser.add_argument('--C1', type=float, default=1, help='loss score weight')
-parser.add_argument('--C2', type=float, default=0, help='penalty for depot return')
-# parser.add_argument('--C3', type=float, default=0.1, help='  penalty for diagonal elements')
-parser.add_argument('--C4', type=float, default=0, help='penalty for not visiting other nodes')
-# parser.add_argument('--C5', type=float, default=10, help='penalty for normalizing constraint')
+#parser.add_argument('--C2', type=float, default=0, help='penalty for depot return')
+parser.add_argument('--C3', type=float, default=0.1, help='  penalty for diagonal elements')
+#parser.add_argument('--C4', type=float, default=0, help='penalty for not visiting other nodes')
+parser.add_argument('--C5', type=float, default=10, help='penalty for normalizing constraint')
 
 args = parser.parse_args()
 torch.backends.cudnn.deterministic = True
@@ -70,7 +70,6 @@ for x in range(LENGDATA):
     Price_Adj[x, prices[x] > 0] = disc_price_pos[prices[x] > 0]
     Price_Adj[x, TC[x] == math.inf] = 2
     TC_Adj[x, TC[x] == math.inf] = 1
-    # print("Negatives: " + str(torch.sum(Price_Adj[x] < 0)))
     print(x)
 
 from models import GNN

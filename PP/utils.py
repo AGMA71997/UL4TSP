@@ -106,20 +106,19 @@ import numpy as np
 
 def calculate_compatibility(time_windows, travel_times, service_times):
     n = len(travel_times)
-    earliest = time_windows[:, 0] + service_times + travel_times
-    feasibles = earliest - torch.reshape(time_windows[:, 1], (1, n))
+    earliest = torch.reshape(time_windows[:, 0], (n, 1)) + torch.reshape(service_times, (n, 1)) \
+               + travel_times
+    feasibles = earliest - time_windows[:, 1]
     earliest[feasibles > 0] = math.inf
-    latest = time_windows[:, 1] + service_times + travel_times
+    latest = torch.reshape(time_windows[:, 1], (n, 1)) + torch.reshape(service_times, (n, 1)) \
+             + travel_times
     latest = torch.minimum(latest, torch.reshape(time_windows[:, 1], (1, n)))
-    latest[latest < earliest] = math.inf
+    latest[earliest == math.inf] = math.inf
 
-    waiting_early = torch.maximum(torch.reshape(time_windows[:, 0], (1, n)) - earliest, torch.zeros((n, n)))
-    waiting_early[earliest == math.inf] = math.inf
-    waiting_late = torch.maximum(torch.reshape(time_windows[:, 0], (1, n)) - latest, torch.zeros((n, n)))
-    waiting_late[latest == math.inf] = math.inf
-
-    TC_early = travel_times + waiting_early
-    TC_late = travel_times + waiting_late
+    TC_early = torch.maximum(earliest, torch.reshape(time_windows[:, 0], (1, n)))
+    TC_late = torch.maximum(latest, torch.reshape(time_windows[:, 0], (1, n)))
+    TC_early.fill_diagonal_(math.inf)
+    TC_late.fill_diagonal_(math.inf)
 
     return TC_early, TC_late
 

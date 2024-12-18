@@ -14,76 +14,81 @@ import pickle
 import statistics
 
 
-def evaluate_reduction(LENGDATA, num_customers, model, temperature, reduction_size, MIP, env_params, POMO):
+def evaluate_reduction(LENGDATA, num_customers, model, temperature, MIP):
+
     coords, demands, time_windows, duals, service_times, travel_times, prices = \
         get_random_problems(LENGDATA, num_customers)
 
-    f0 = coords[:, 1:, :]
-    f1 = duals[:, 1:]
-    f2 = prices[:, 0, 1:]
-    f3 = prices[:, 1:, 0]
-    # f2 = time_windows[:, 1:, 1]-time_windows[:, 1:, 0]
-    # f3 = demands[:, 1:]
+    f0 = coords  # [:, 1:, :]
+    f1 = duals  # [:, 1:]
+    f2 = time_windows  # [:, 1:, :]
+    f3 = demands  # [:, 1:]
+    f4 = service_times  # [:, 1:]
+    # f5 = p_matrix[:, 0, 1:]
+    # f6 = p_matrix[:, 1:, 0]
+
     dims = f1.shape
     f1 = torch.reshape(f1, (dims[0], dims[1], 1))
-    f2 = torch.reshape(f2, (dims[0], dims[1], 1))
     f3 = torch.reshape(f3, (dims[0], dims[1], 1))
-    X = torch.cat([f0, f1, f2, f3], dim=2)
-    distance_m = prices[:, 1:, 1:]
+    f4 = torch.reshape(f4, (dims[0], dims[1], 1))
+    # f5 = torch.reshape(f5, (dims[0], dims[1], 1))
+    # f6 = torch.reshape(f6, (dims[0], dims[1], 1))
+
+    X = torch.cat([f0, f1, f2, f3, f4], dim=2)
+
+    mask = torch.ones(num_customers + 1, num_customers + 1).cpu()
+    mask.fill_diagonal_(0)
+
+    TC = torch.zeros((LENGDATA, num_customers + 1, num_customers + 1))
+
+    Price_Adj = torch.zeros((LENGDATA, num_customers + 1, num_customers + 1))
+    for x in range(LENGDATA):
+        TC[x] = calculate_compatibility(time_windows[x], travel_times[x], service_times[x])[1]
+        disc_price_neg = prices[x] * torch.exp(-1 * TC[x] - torch.reshape(demands[x], (1, len(demands[x]))))
+        Price_Adj[x, prices[x] < 0] = disc_price_neg[prices[x] < 0]
+        disc_price_pos = prices[x] * torch.exp(TC[x] + torch.reshape(demands[x], (1, len(demands[x]))))
+        Price_Adj[x, prices[x] > 0] = disc_price_pos[prices[x] > 0]
+        Price_Adj[x, TC[x] == math.inf] = 2
+        print(x)
+
+    distance_m = Price_Adj  # [:, 1:, 1:]
     adj = torch.exp(-1. * distance_m / temperature)
+    adj *= mask
     output = model(X, adj)
-    probas = torch.sort(output, 1, descending=True)[0]
+
+    point_wise_distance = torch.matmul(output, torch.roll(torch.transpose(output, 1, 2), -1, 1))
 
     print("Reduction Made")
-
-    sorted_indices = retain_indices(output, reduction_size)
-
-    env = Env(**env_params)
-    env.declare_problem(coords, demands, time_windows, duals, service_times, travel_times,
-                        prices * -1, LENGDATA)
-    pp_rl_solver = ESPRCTW_RL_solver(env, POMO)
-    loss, best_columns2, best_rewards2, penalties = pp_rl_solver.get_loss()
-
-    Scores = []
-    # POMO_ML = []
-    POMO_Dual = []
-    Exact = []
     for x in range(LENGDATA):
-        full_price_mean = torch.mean(prices[x], dim=0)
-        sorted_mean_price_rank = torch.sort(full_price_mean[1:], descending=False)[0][:reduction_size]
-        price_indeces = torch.argsort(full_price_mean[1:], descending=False)[:reduction_size]
-        # print(sorted_mean_price_rank)
-        # print(price_indeces.tolist())
-        # print(sorted_indices[x].tolist())
-        print(probas[x, :reduction_size, 0])
-        # print(torch.mean(torch.sort(f1[x, :reduction_size, :], descending=True)[0]))
-        non0 = np.array([float(d) for d in f1[x] if d > 0])
-        '''print(max(non0))
-        print(min(non0))
-        print(len(non0))
-        print(statistics.mean(non0))
-        print((np.sort(non0 * -1) * -1)[:reduction_size])'''
-        print('-----------------')
+        k = 10
+        tensor = point_wise_distance[x]  # Price_Adj[x] # output[x] #
 
-        NR = Node_Reduction(sorted_indices[x:x + 1], coords[x:x + 1])
-        red_cor = NR.reduce_instance()[0]
-        red_cor, red_dem, red_tws, red_sts, red_tms, red_prices, cus_mapping = reshape_problem_2(red_cor,
-                                                                                                 demands[x],
-                                                                                                 time_windows[x],
-                                                                                                 service_times[x],
-                                                                                                 travel_times[x],
-                                                                                                 prices[x])
+        for col_idx in range(tensor.shape[1]):
+            # Extract the column
+            col = tensor[:, col_idx]
 
-        N = len(red_cor) - 1
+            # Find the indices of the k smallest elements
+            smallest_indices = torch.topk(col, k, largest=True).indices
+
+            col = Price_Adj[x, :, col_idx]
+            # Extract the k smallest elements
+            smallest_values = col[smallest_indices]
+            print((col_idx, smallest_values.tolist(), smallest_indices.tolist()))
+
+        print("################")
 
         if MIP:
-            subproblem = Subproblem(N, 1, red_tms, red_dem, red_tws, red_sts, red_prices, [])
+            if x >= 0:
+                continue
+            subproblem = Subproblem(num_customers, 1, travel_times, demands, time_windows,
+                                    service_times, None, [])
             ordered_route, reduced_cost = subproblem.MIP_program()
             if len(ordered_route) == 3 and reduced_cost >= 0:
                 ordered_route = []
                 reduced_cost = 0
         else:
-            algo = ESPPRC(1, red_dem, red_tws, red_sts, N, red_tms, red_prices)
+            algo = ESPPRC(1, demands, time_windows, service_times, num_customers,
+                          travel_times, prices)
             opt_labels = algo.solve()
             print(len(opt_labels))
             if len(opt_labels) > 0:
@@ -93,41 +98,19 @@ def evaluate_reduction(LENGDATA, num_customers, model, temperature, reduction_si
                 ordered_route = []
                 reduced_cost = 0
 
-        ordered_route = remap_route(ordered_route, cus_mapping)
-
         # HERE
 
-        print("The route with a reduced instance: " + str(ordered_route))
-        print("with Objective: " + str(reduced_cost))
-        # print("POMO Objective with ML Reduction: " + str(best_rewards[x].item()))
-        # print("With optimal route: " + str([cus_mappings[x][j] for j in columns[x] if j != 0]))
-        print("POMO Objective with no Reduction: " + str(best_rewards2[x].item()))
-        print("With route: " + str([j for j in best_columns2[x]]))
+        '''print("The route with a reduced instance: " + str(ordered_route))
+        print("with Objective: " + str(reduced_cost))'''
+        # Exact.append(reduced_cost)
 
-        miscount = 0
-        for node in best_columns2[x]:
-            if node != 0 and node - 1 not in sorted_indices[x]:
-                miscount += 1
+    # print("On average, " + str(round(statistics.mean(Scores), 2)) + " nodes are missing. ")
+    # print("The mean exact score is: " + str(statistics.mean(Exact)))
 
-        # print("The length of the benchmark route is: " + str(len(best_columns2[0]) - 2))
-        # print("The remaining customers are: " + str(sorted_indices[x] + 1))
-        print("The number of missing customers is: " + str(miscount))
-        print("----------------")
-        print("")
-        Scores.append(miscount)
-        # POMO_ML.append(best_rewards[x].item())
-        POMO_Dual.append(best_rewards2[x].item())
-        Exact.append(reduced_cost)
-
-    print("On average, " + str(round(statistics.mean(Scores), 2)) + " nodes are missing. ")
-    print("The mean exact score is: " + str(statistics.mean(Exact)))
-    # print("where the mean POMO score with ML reduction is: " + str(statistics.mean(POMO_ML)))
-    print("as opposed to its score with no reduction: " + str(statistics.mean(POMO_Dual)))
-
-    pickle_out = open('Reduction Results for N=' + str(num_customers) + " with reduction size " + str(reduction_size),
+    '''pickle_out = open('Reduction Results for N=' + str(num_customers) + " with reduction size " + str(reduction_size),
                       'wb')
     pickle.dump(Scores, pickle_out)
-    pickle_out.close()
+    pickle_out.close()'''
 
 
 def main():
@@ -137,16 +120,13 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--num_customers', type=int, default=200)
-    parser.add_argument('--data_size', type=int, default=50, help='No. of evaluation instances')
+    parser.add_argument('--data_size', type=int, default=10, help='No. of evaluation instances')
     parser.add_argument('--device', type=str, default='cpu', help='Device')
-    parser.add_argument('--reduction_size', type=int, default=1, help='Remaining Nodes in Graph')
     parser.add_argument('--hidden', type=int, default=64, help='Number of hidden units.')
-    parser.add_argument('--epochs', type=int, default=100, help='Number of training epochs used.')
+    parser.add_argument('--epochs', type=int, default=300, help='Number of training epochs used.')
     parser.add_argument('--temperature', type=float, default=3.5, help='temperature for adj matrix')
     parser.add_argument('--nlayers', type=int, default=2, help='num of layers')
-    parser.add_argument('--MIP', type=bool, default=False, help='use MIP for exact method.')
-    parser.add_argument('--POMO_path', type=str, default='model20_max_t_data_Nby2', help='POMO model path')
-    parser.add_argument('--POMO_epoch', type=int, default=200, help='POMO model epoch')
+    parser.add_argument('--MIP', type=bool, default=True, help='use MIP for exact method.')
 
     args = parser.parse_args()
     device = torch.device(args.device)
@@ -156,39 +136,13 @@ def main():
 
     print("Instances are of size " + str(args.num_customers))
 
-    model = GNN(input_dim=5, hidden_dim=args.hidden, output_dim=2, n_layers=args.nlayers)
+    model = GNN(input_dim=7, hidden_dim=args.hidden, output_dim=args.num_customers + 1, n_layers=args.nlayers)
     model_name = 'Saved_Models/PP_%d/scatgnn_layer_%d_hid_%d_model_%d_temp_3.500.pth' % \
                  (args.num_customers, args.nlayers, args.hidden, args.epochs)
     checkpoint_main = torch.load(model_name, map_location=device)
     model.load_state_dict(checkpoint_main)
 
-    POMO_params = {
-        'embedding_dim': 128,
-        'sqrt_embedding_dim': 128 ** (1 / 2),
-        'encoder_layer_num': 6,
-        'qkv_dim': 16,
-        'head_num': 8,
-        'logit_clipping': 10,
-        'ff_hidden_dim': 512,
-        'eval_type': 'argmax',
-    }
-
-    POMO_path = args.POMO_path
-    POMO_epoch = args.POMO_epoch
-    POMO_load = {
-        'path': POMO_path,
-        'epoch': POMO_epoch}
-
-    env_params = {'problem_size': num_customers,
-                  'pomo_size': num_customers}
-
-    POMO = Model(**POMO_params)
-    checkpoint_fullname = '{path}/checkpoint-{epoch}.pt'.format(**POMO_load)
-    checkpoint = torch.load(checkpoint_fullname, map_location=device)
-    POMO.load_state_dict(checkpoint['model_state_dict'])
-
-    evaluate_reduction(LENGDATA, num_customers, model, args.temperature, args.reduction_size, MIP, env_params,
-                       POMO)
+    evaluate_reduction(LENGDATA, num_customers, model, args.temperature, MIP)
 
 
 if __name__ == "__main__":

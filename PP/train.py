@@ -33,9 +33,9 @@ parser.add_argument('--temperature', type=float, default=3.5,
 parser.add_argument('--stepsize', type=int, default=20,
                     help='step size')
 parser.add_argument('--C1', type=float, default=1, help='loss score weight')
-#parser.add_argument('--C2', type=float, default=0, help='penalty for depot return')
+# parser.add_argument('--C2', type=float, default=0, help='penalty for depot return')
 parser.add_argument('--C3', type=float, default=0.1, help='  penalty for diagonal elements')
-#parser.add_argument('--C4', type=float, default=0, help='penalty for not visiting other nodes')
+# parser.add_argument('--C4', type=float, default=0, help='penalty for not visiting other nodes')
 parser.add_argument('--C5', type=float, default=10, help='penalty for normalizing constraint')
 
 args = parser.parse_args()
@@ -48,7 +48,7 @@ torch.backends.cudnn.enabled = True
 ### load train instance
 LENGDATA = args.data_size
 problem_size = args.num_of_nodes
-coords, demands, time_windows, duals, service_times, travel_times, prices = get_random_problems(LENGDATA, problem_size)
+coords, demands, time_windows, service_times, travel_times = get_random_problems(LENGDATA, problem_size)
 
 NumofTestSample = LENGDATA
 
@@ -58,24 +58,23 @@ total_samples = int(np.floor(LENGDATA * dataset_scale))
 # neighborhood = 10
 TC = torch.zeros((LENGDATA, args.num_of_nodes + 1, args.num_of_nodes + 1))
 
-Price_Adj = torch.zeros((LENGDATA, args.num_of_nodes + 1, args.num_of_nodes + 1))
+# Price_Adj = torch.zeros((LENGDATA, args.num_of_nodes + 1, args.num_of_nodes + 1))
 TC_Adj = torch.zeros((LENGDATA, args.num_of_nodes + 1, args.num_of_nodes + 1))
-Targets = torch.zeros((LENGDATA, args.num_of_nodes + 1, args.num_of_nodes + 1))
 
 for x in range(LENGDATA):
     TC[x] = calculate_compatibility(time_windows[x], travel_times[x], service_times[x])[1]
-    disc_price_neg = prices[x] * torch.exp(-1 * TC[x] - torch.reshape(demands[x], (1, len(demands[x]))))
+    '''disc_price_neg = prices[x] * torch.exp(-1 * TC[x] - torch.reshape(demands[x], (1, len(demands[x]))))
     Price_Adj[x, prices[x] < 0] = disc_price_neg[prices[x] < 0]
     disc_price_pos = prices[x] * torch.exp(TC[x] + torch.reshape(demands[x], (1, len(demands[x]))))
     Price_Adj[x, prices[x] > 0] = disc_price_pos[prices[x] > 0]
-    Price_Adj[x, TC[x] == math.inf] = 2
+    Price_Adj[x, TC[x] == math.inf] = 2'''
     TC_Adj[x, TC[x] == math.inf] = 1
     print(x)
 
 from models import GNN
 
 # scattering model
-model = GNN(input_dim=7, hidden_dim=args.hidden, output_dim=args.num_of_nodes + 1, n_layers=args.nlayers)
+model = GNN(input_dim=6, hidden_dim=args.hidden, output_dim=args.num_of_nodes + 1, n_layers=args.nlayers)
 
 ### count model parameters
 print('Total number of parameters:')
@@ -83,36 +82,35 @@ print(count_parameters(model))
 
 
 class PP_Dataset(Dataset):
-    def __init__(self, co, tw, dul, st, dems, t_matrix, p_matrix, price_adj, tc_adj):
+    def __init__(self, co, tw, st, dems, t_matrix, tc_adj):
         self.coord = torch.FloatTensor(co)
         self.time_windows = torch.FloatTensor(tw)
-        self.duals = torch.FloatTensor(dul)
+        # self.duals = torch.FloatTensor(dul)
         self.travel_times = torch.FloatTensor(t_matrix)
-        self.prices = torch.FloatTensor(p_matrix)
+        # self.prices = torch.FloatTensor(p_matrix)
         self.service_times = torch.FloatTensor(st)
         self.demands = torch.FloatTensor(dems)
-        self.price_adj = price_adj
+        # self.price_adj = price_adj
         self.tc_adj = tc_adj
 
     def __getitem__(self, index):
         xy_pos = self.coord[index]
         tw = self.time_windows[index]
-        dual = self.duals[index]
+        # dual = self.duals[index]
         t_matrix = self.travel_times[index]
-        p_matrix = self.prices[index]
+        # p_matrix = self.prices[index]
         st = self.service_times[index]
         dems = self.demands[index]
-        price_adj = self.price_adj[index]
+        # price_adj = self.price_adj[index]
         tc_adj = self.tc_adj[index]
 
-        return tuple(zip(xy_pos, tw, dual, st, dems, t_matrix, p_matrix, price_adj, tc_adj))
+        return tuple(zip(xy_pos, tw, st, dems, t_matrix, tc_adj))
 
     def __len__(self):
         return len(self.coord)
 
 
-dataset = PP_Dataset(coords, time_windows, duals, service_times, demands, travel_times, prices,
-                     Price_Adj, TC_Adj)
+dataset = PP_Dataset(coords, time_windows, service_times, demands, travel_times, TC_Adj)
 
 num_trainpoints = LENGDATA
 num_valpoints = total_samples - num_trainpoints
@@ -141,34 +139,34 @@ def train(epoch):
     for batch in train_loader:
         cor = batch[0].cpu()
         tw = batch[1].cpu()
-        dul = batch[2].cpu()
-        sts = batch[3].cpu()
-        dems = batch[4].cpu()
-        t_matrix = batch[5].cpu()
-        p_matrix = batch[6].cpu()
-        price_adj_mat = batch[7].cpu()
-        tc_adj_mat = batch[8].cpu()
+        #dul = batch[2].cpu()
+        sts = batch[2].cpu()
+        dems = batch[3].cpu()
+        t_matrix = batch[4].cpu()
+        # p_matrix = batch[6].cpu()
+        # price_adj_mat = batch[7].cpu()
+        tc_adj_mat = batch[5].cpu()
 
         f0 = cor  # [:, 1:, :]
-        f1 = dul  # [:, 1:]
+        # f1 = dul  # [:, 1:]
         f2 = tw  # [:, 1:, :]
         f3 = dems  # [:, 1:]
         f4 = sts  # [:, 1:]
 
-        dims = f1.shape
-        f1 = torch.reshape(f1, (dims[0], dims[1], 1))
+        dims = f3.shape
+        # f1 = torch.reshape(f1, (dims[0], dims[1], 1))
         f3 = torch.reshape(f3, (dims[0], dims[1], 1))
         f4 = torch.reshape(f4, (dims[0], dims[1], 1))
 
-        X = torch.cat([f0, f1, f2, f3, f4], dim=2)
+        X = torch.cat([f0, f2, f3, f4], dim=2)
 
-        distance_m = price_adj_mat
+        distance_m = t_matrix
         adj = torch.exp(-1. * distance_m / args.temperature)
         adj *= mask
         output = model(X, adj)
 
         point_wise_distance = torch.matmul(output, torch.roll(torch.transpose(output, 1, 2), -1, 1))
-        weighted_path = torch.mul(point_wise_distance, price_adj_mat)
+        weighted_path = torch.mul(point_wise_distance, t_matrix)
         weighted_path = weighted_path.sum(dim=(1, 2))
 
         PPLoss_constaint, Heat_mat = weighted_path, point_wise_distance

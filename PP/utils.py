@@ -112,11 +112,16 @@ def calculate_compatibility(time_windows, travel_times, service_times):
     earliest[feasibles > 0] = math.inf
     latest = torch.reshape(time_windows[:, 1], (n, 1)) + torch.reshape(service_times, (n, 1)) \
              + travel_times
-    latest = torch.minimum(latest, torch.reshape(time_windows[:, 1], (1, n)))
+    latest = torch.minimum(latest, time_windows[:, 1])
     latest[earliest == math.inf] = math.inf
 
-    TC_early = torch.maximum(earliest, torch.reshape(time_windows[:, 0], (1, n)))
-    TC_late = torch.maximum(latest, torch.reshape(time_windows[:, 0], (1, n)))
+    waiting_early = torch.maximum(time_windows[:, 0] - earliest, torch.zeros((n, n)))
+    waiting_early[earliest == math.inf] = math.inf
+    waiting_late = torch.maximum(time_windows[:, 0] - latest, torch.zeros((n, n)))
+    waiting_late[latest == math.inf] = math.inf
+
+    TC_early = travel_times + waiting_early
+    TC_late = travel_times + waiting_late
     TC_early.fill_diagonal_(math.inf)
     TC_late.fill_diagonal_(math.inf)
 

@@ -15,7 +15,6 @@ import statistics
 
 
 def evaluate_reduction(LENGDATA, num_customers, model, temperature, MIP):
-
     coords, demands, time_windows, duals, service_times, travel_times, prices = \
         get_random_problems(LENGDATA, num_customers)
 
@@ -60,20 +59,21 @@ def evaluate_reduction(LENGDATA, num_customers, model, temperature, MIP):
 
     print("Reduction Made")
     for x in range(LENGDATA):
-        k = 10
-        tensor = point_wise_distance[x]  # Price_Adj[x] # output[x] #
-
-        for col_idx in range(tensor.shape[1]):
+        k = 5
+        tensor = point_wise_distance[x]  # Price_Adj[x] #
+        total_rows = 10  # tensor.shape[1]
+        for row_idx in range(total_rows):
             # Extract the column
-            col = tensor[:, col_idx]
+            row = tensor[row_idx, :]
 
             # Find the indices of the k smallest elements
-            smallest_indices = torch.topk(col, k, largest=True).indices
+            smallest_indices = torch.topk(row, k, largest=True).indices
 
-            col = Price_Adj[x, :, col_idx]
+            row = Price_Adj[x, row_idx, :]
             # Extract the k smallest elements
-            smallest_values = col[smallest_indices]
-            print((col_idx, smallest_values.tolist(), smallest_indices.tolist()))
+            smallest_values = row[smallest_indices]
+            smallest_values = torch.sort(smallest_values)[0]
+            print((row_idx, smallest_values.tolist(), smallest_indices.tolist()))
 
         print("################")
 
@@ -119,10 +119,10 @@ def main():
     torch.manual_seed(25)
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--num_customers', type=int, default=200)
+    parser.add_argument('--num_customers', type=int, default=1000)
     parser.add_argument('--data_size', type=int, default=10, help='No. of evaluation instances')
     parser.add_argument('--device', type=str, default='cpu', help='Device')
-    parser.add_argument('--hidden', type=int, default=64, help='Number of hidden units.')
+    parser.add_argument('--hidden', type=int, default=128, help='Number of hidden units.')
     parser.add_argument('--epochs', type=int, default=300, help='Number of training epochs used.')
     parser.add_argument('--temperature', type=float, default=3.5, help='temperature for adj matrix')
     parser.add_argument('--nlayers', type=int, default=2, help='num of layers')
